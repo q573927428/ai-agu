@@ -1,0 +1,75 @@
+# === 编辑器 / IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# === 日志 ===
+*.log
+*.pid
+
+# === 环境变量 ===
+.env
+.env.local
+.env.*.local
+
+# === 依赖目录 ===
+node_modules/
+vendor/
+
+# === 构建产物 ===
+dist/
+build/
+
+# ====================
+# Python (后端)
+# ====================
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Alembic 版本文件（自动生成）
+backend/alembic/versions/*.py
+!backend/alembic/versions/.gitkeep
+
+# ====================
+# Nuxt (前端)
+# ====================
+.nuxt/
+.output/
+.nitro/
+.cache/
+
+# ====================
+# Docker
+# ====================
+.docker/
+
+# ====================
+# 模型输出文件
+# ====================
+backend/models/
+
+# ====================
+# 数据 / 临时文件
+# ====================
+*.csv
+*.xlsx
+*.json
+!query
+backup/
+tmp/
