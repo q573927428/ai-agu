@@ -1,0 +1,164 @@
+<template>
+  <div class="dashboard">
+    <h1 class="page-title">首页仪表盘</h1>
+
+    <!-- 市场概览 -->
+    <el-row :gutter="20" class="section">
+      <el-col :span="24">
+        <el-card shadow="hover">
+          <template #header>
+            <div class="card-header">
+              <span>市场概览</span>
+              <el-tag type="info" size="small">{{ marketDate }}</el-tag>
+            </div>
+          </template>
+          <div class="market-grid">
+            <div class="market-item">
+              <div class="label">上证指数</div>
+              <div class="value">--</div>
+            </div>
+            <div class="market-item">
+              <div class="label">深证成指</div>
+              <div class="value">--</div>
+            </div>
+            <div class="market-item">
+              <div class="label">上涨家数</div>
+              <div class="value">--</div>
+            </div>
+            <div class="market-item">
+              <div class="label">下跌家数</div>
+              <div class="value">--</div>
+            </div>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <!-- TOP10 预览 -->
+    <el-row :gutter="20" class="section">
+      <el-col :span="24">
+        <el-card shadow="hover">
+          <template #header>
+            <div class="card-header">
+              <span>TOP10 股票排名</span>
+              <NuxtLink to="/rankings">
+                <el-button text type="primary" size="small">
+                  查看全部 <el-icon><ElIconArrowRight /></el-icon>
+                </el-button>
+              </NuxtLink>
+            </div>
+          </template>
+          <RankingTable :data="topRankings" :loading="loading" @row-click="goToStock" />
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <!-- 模型状态 -->
+    <el-row :gutter="20" class="section">
+      <el-col :span="24">
+        <el-card shadow="hover">
+          <template #header>
+            <div class="card-header">
+              <span>模型状态</span>
+            </div>
+          </template>
+          <el-descriptions :column="4" border>
+            <el-descriptions-item label="模型版本">{{ modelStatus.model_version || "--" }}</el-descriptions-item>
+            <el-descriptions-item label="最近训练">{{ modelStatus.last_train_date || "--" }}</el-descriptions-item>
+            <el-descriptions-item label="最新 IC">{{ modelStatus.latest_ic?.toFixed(4) || "--" }}</el-descriptions-item>
+            <el-descriptions-item label="模型状态">
+              <el-tag :type="modelStatus.is_active ? 'success' : 'info'" size="small">
+                {{ modelStatus.is_active ? "活跃" : "未训练" }}
+              </el-tag>
+            </el-descriptions-item>
+          </el-descriptions>
+        </el-card>
+      </el-col>
+    </el-row>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, computed } from "vue";
+import { useRouter } from "vue-router";
+import { useApi } from "~/composables/useApi";
+import type { RankingItem } from "~/types/api";
+
+const router = useRouter();
+const { fetchRankings } = useApi();
+
+const loading = ref(true);
+const topRankings = ref<RankingItem[]>([]);
+const modelStatus = ref({
+  model_version: "",
+  last_train_date: null as string | null,
+  latest_ic: 0,
+  is_active: false,
+});
+
+const marketDate = computed(() => {
+  return new Date().toLocaleDateString("zh-CN");
+});
+
+onMounted(async () => {
+  loading.value = true;
+  const result = await fetchRankings();
+  if (result.data?.rankings) {
+    topRankings.value = result.data.rankings.slice(0, 10);
+  }
+  loading.value = false;
+});
+
+function goToStock(code: string) {
+  router.push(`/stock/${code}`);
+}
+</script>
+
+<style scoped>
+.dashboard {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.page-title {
+  font-size: 24px;
+  margin-bottom: 20px;
+  color: var(--el-text-color-primary);
+}
+
+.section {
+  margin-bottom: 20px;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+}
+
+.market-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+  text-align: center;
+}
+
+.market-item {
+  padding: 16px;
+  border-radius: 8px;
+  background: var(--el-color-info-light-9);
+}
+
+.market-item .label {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 8px;
+}
+
+.market-item .value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+</style>

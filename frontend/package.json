@@ -1,0 +1,30 @@
+{
+  "name": "ai-agu-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.0",
+    "@element-plus/nuxt": "^1.1.5",
+    "dayjs": "^1.11.0",
+    "echarts": "^5.5.0",
+    "element-plus": "^2.9.0",
+    "nuxt": "^4.0.0",
+    "ofetch": "^1.4.0",
+    "pinia": "^2.3.0",
+    "vue": "^3.5.0",
+    "vue-echarts": "^7.0.0",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@nuxtjs/eslint-config-typescript": "^12.0.0",
+    "@types/node": "^25.9.1",
+    "sass": "^1.83.0",
+    "typescript": "^5.7.0"
+  }
+}
