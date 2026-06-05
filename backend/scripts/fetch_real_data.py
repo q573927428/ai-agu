@@ -2,10 +2,11 @@
 真实A股数据采集脚本 — 从Tushare Pro拉取数据写入MySQL
 
 用法:
-  python scripts/fetch_real_data.py                         # 拉取最近交易日数据
-  python scripts/fetch_real_data.py 2026-06-05              # 拉取指定日期数据
-  python scripts/fetch_real_data.py 2026-06-05 --top 100    # 仅拉取前100只（测试用）
-  python scripts/fetch_real_data.py --history 30            # 拉取最近30个交易日的历史数据
+  python scripts/fetch_real_data.py                           # 拉取最近交易日数据
+  python scripts/fetch_real_data.py 2026-06-05                # 拉取指定日期数据
+  python scripts/fetch_real_data.py 2026-06-01 2026-06-05     # 拉取日期区间数据
+  python scripts/fetch_real_data.py 2026-06-05 --top 100      # 仅拉取前100只（测试用）
+  python scripts/fetch_real_data.py --history 30              # 拉取最近30个交易日的历史数据
 """
 import sys
 import os
@@ -14,7 +15,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import argparse
 import time
 import random
-import concurrent.futures
 from threading import Lock
 import pandas as pd
 import numpy as np
@@ -70,63 +70,39 @@ def extract_symbol(ts_code: str) -> str:
 # - vol 单位: 手 (1手=100股)
 # - amount 单位: 千元
 # - pct_chg: 涨跌幅(%)
-# - 不含 turnover_rate
 
-# ---------- 全局速率限制（令牌桶）----------
-# Tushare 免费版: 500次/分钟 → 满负荷约 8.33 req/s
-# 留安全余量，设 TARGET_RATE = 8 req/s (0.125s/req)
-RATE_LIMIT_LOCK = Lock()
-RATE_LIMIT_TOKENS = 0          # 当前可用令牌数
-RATE_LIMIT_TS = time.time()    # 上次补充时间
-RATE_LIMIT_CAP = 8             # 桶容量
-RATE_LIMIT_REFILL_RATE = 8     # 每秒补充令牌数（次/秒）
+# ---------- 简易限速（按日期批量拉取，每秒1次即可）----------
+LAST_REQUEST_TIME = 0
+REQUEST_LOCK = Lock()
 
 
-def _global_acquire(max_wait: float = 120.0) -> None:
-    """
-    全局令牌桶速率限制：确保所有线程合计不超过 RATE_LIMIT_REFILL_RATE req/s。
-    若等待超过 max_wait 秒则抛出超时异常，防止死锁。
-    """
-    global RATE_LIMIT_TOKENS, RATE_LIMIT_TS
-    start_ts = time.time()
-    while True:
-        with RATE_LIMIT_LOCK:
-            now = time.time()
-            elapsed = now - RATE_LIMIT_TS
-            # 补充令牌
-            RATE_LIMIT_TOKENS = min(RATE_LIMIT_CAP, RATE_LIMIT_TOKENS + elapsed * RATE_LIMIT_REFILL_RATE)
-            RATE_LIMIT_TS = now
-            if RATE_LIMIT_TOKENS >= 1:
-                RATE_LIMIT_TOKENS -= 1
-                return
-        # 无可用令牌，等待
-        time.sleep(0.01)
-        if time.time() - start_ts > max_wait:
-            raise TimeoutError("全局速率限制等待超时")
+def _rate_limit(min_interval: float = 0.35) -> None:
+    """简易速率限制，确保两次请求间隔不少于 min_interval 秒"""
+    global LAST_REQUEST_TIME
+    with REQUEST_LOCK:
+        now = time.time()
+        elapsed = now - LAST_REQUEST_TIME
+        if elapsed < min_interval:
+            time.sleep(min_interval - elapsed)
+        LAST_REQUEST_TIME = time.time()
 
 
-# 并发控制
-INSERT_LOCK = Lock()
-BATCH_RECORDS = []  # 全局批量插入缓冲区
-BATCH_SIZE = 6000   # 每批插入条数
-PROGRESS_LOCK = Lock()
-TOTAL_DONE = 0
-TOTAL_STOCKS = 0
+# ---------- 批量写入缓冲区 ----------
+BATCH_RECORDS = []
+BATCH_SIZE = 6000
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="从Tushare Pro拉取真实A股数据到MySQL")
-    parser.add_argument("date", nargs="?", help="交易日期 (YYYY-MM-DD)，默认最近交易日")
+    parser.add_argument("dates", nargs="*", help="交易日期/区间 (YYYY-MM-DD)，可指定1个或2个日期")
     parser.add_argument("--top", type=int, default=0, help="限制股票数量 (0=全部)")
     parser.add_argument("--history", type=int, default=0,
                         help="拉取最近N个交易日的历史数据（覆盖日期参数）")
     parser.add_argument("--skip-macro", action="store_true", help="跳过宏观数据")
     parser.add_argument("--skip-financial", action="store_true", help="跳过财务数据")
     parser.add_argument("--skip-stock-basic", action="store_true", help="跳过股票基础信息拉取")
-    parser.add_argument("--delay", type=float, default=0.15,
-                        help="每次请求间隔秒数 (Tushare免费版限流500次/分钟，建议0.15~0.2s)")
-    parser.add_argument("--workers", type=int, default=3,
-                        help="并发线程数 (默认3，Tushare建议低并发)")
+    parser.add_argument("--delay", type=float, default=0.35,
+                        help="每次请求间隔秒数 (默认0.35，Tushare免费版500次/分钟)")
     return parser.parse_args()
 
 
@@ -137,14 +113,7 @@ def ensure_tables_exist():
 
 
 def fetch_stock_basic(db: Session, max_retries: int = 3) -> int:
-    """① 拉取全市场A股基础信息 → stock_basic（使用Tushare Pro）
-
-    获取完整字段：ts_code, symbol, name, area, industry, fullname, enname,
-    cnspell, market, exchange, curr_type, list_status, list_date,
-    delist_date, is_hs, act_name, act_ent_type
-
-    自动处理 Tushare 频率超限错误，等待 61秒 后重试。
-    """
+    """① 拉取全市场A股基础信息 → stock_basic（使用Tushare Pro）"""
     for attempt in range(1, max_retries + 1):
         try:
             logger.info(f"正在获取全市场A股基础信息 (Tushare Pro)... 尝试 {attempt}/{max_retries}")
@@ -264,33 +233,24 @@ def _safe_int(value, multiplier=1):
         return None
 
 
-def _batch_insert_one(session, record: StockDaily):
-    """将一条记录加入批量缓冲区，达到 BATCH_SIZE 自动提交"""
+def _batch_insert_many(session, records: list):
+    """将多条记录加入缓冲区，达到 BATCH_SIZE 自动提交"""
     global BATCH_RECORDS
-    BATCH_RECORDS.append(record)
+    BATCH_RECORDS.extend(records)
     if len(BATCH_RECORDS) >= BATCH_SIZE:
         _flush_batch(session)
 
 
 def _upsert_stock_daily(session, rec: StockDaily) -> bool:
-    """
-    使用 INSERT ... ON DUPLICATE KEY UPDATE 原子化写入。
-    避免 session.merge() 按主键匹配失效导致重复键错误的问题。
-    """
-    from sqlalchemy import text
+    """使用 INSERT ... ON DUPLICATE KEY UPDATE 原子化写入"""
     stmt = text("""
         INSERT INTO stock_daily (stock_code, trade_date, open, high, low, close, pre_close, `change`, pct_chg, volume, amount)
         VALUES (:stock_code, :trade_date, :open, :high, :low, :close, :pre_close, :change_val, :pct_chg, :volume, :amount)
         ON DUPLICATE KEY UPDATE
-            open = VALUES(open),
-            high = VALUES(high),
-            low = VALUES(low),
-            close = VALUES(close),
-            pre_close = VALUES(pre_close),
-            `change` = VALUES(`change`),
-            pct_chg = VALUES(pct_chg),
-            volume = VALUES(volume),
-            amount = VALUES(amount)
+            open = VALUES(open), high = VALUES(high), low = VALUES(low),
+            close = VALUES(close), pre_close = VALUES(pre_close),
+            `change` = VALUES(`change`), pct_chg = VALUES(pct_chg),
+            volume = VALUES(volume), amount = VALUES(amount)
     """)
     session.execute(stmt, {
         "stock_code": rec.stock_code,
@@ -316,11 +276,11 @@ def _flush_batch(session):
         return
     batch = BATCH_RECORDS
     BATCH_RECORDS = []
-    chunk_size = 2000
-    MAX_SQL_PARAMS = 500  # pymysql 安全上限
-    # 根据 MAX_SQL_PARAMS (每行11个参数) 计算实际 chunk_size
-    chunk_size = min(chunk_size, MAX_SQL_PARAMS // 11)
+
+    MAX_SQL_PARAMS = 500
+    chunk_size = min(2000, MAX_SQL_PARAMS // 11)  # 每行11个参数
     total_written = 0
+
     for chunk_start in range(0, len(batch), chunk_size):
         chunk = batch[chunk_start:chunk_start + chunk_size]
         try:
@@ -351,15 +311,10 @@ def _flush_batch(session):
                 INSERT INTO stock_daily (stock_code, trade_date, open, high, low, close, pre_close, `change`, pct_chg, volume, amount)
                 VALUES {values_str}
                 ON DUPLICATE KEY UPDATE
-                    open = VALUES(open),
-                    high = VALUES(high),
-                    low = VALUES(low),
-                    close = VALUES(close),
-                    pre_close = VALUES(pre_close),
-                    `change` = VALUES(`change`),
-                    pct_chg = VALUES(pct_chg),
-                    volume = VALUES(volume),
-                    amount = VALUES(amount)
+                    open = VALUES(open), high = VALUES(high), low = VALUES(low),
+                    close = VALUES(close), pre_close = VALUES(pre_close),
+                    `change` = VALUES(`change`), pct_chg = VALUES(pct_chg),
+                    volume = VALUES(volume), amount = VALUES(amount)
             """)
             session.execute(stmt, params)
             session.commit()
@@ -377,200 +332,103 @@ def _flush_batch(session):
     logger.info(f"  📦 批量写入完成，共 {total_written}/{len(batch)} 条")
 
 
-def _update_progress():
-    """更新并打印进度"""
-    global TOTAL_DONE
-    with PROGRESS_LOCK:
-        TOTAL_DONE += 1
-        done = TOTAL_DONE
-        total = TOTAL_STOCKS
-    if total > 0 and done % 100 == 0:
-        pct = done / total * 100
-        logger.info(f"  📊 整体进度: {done}/{total} ({pct:.1f}%)")
-
-
-def _call_daily_with_retry(ts_code: str, start_date: str, end_date: str,
-                           max_retries: int = 3) -> pd.DataFrame:
+def _call_daily_by_date_with_retry(trade_date: str, max_retries: int = 3) -> pd.DataFrame:
     """
-    调用 pro.daily()，支持频率超限自动重试（等待61s），
-    每次调用前先通过全局令牌桶 _global_acquire() 限速。
+    调用 pro.daily(trade_date=...) — 1次请求拉取全市场，
+    支持频率超限自动重试（等待61s）。
+
+    这是速度优化的关键: 按日期拉取代替按股票拉取，
+    全市场每天只需1次请求 vs 旧版5000+次请求。
     """
     for attempt in range(1, max_retries + 1):
-        # 1) 全局令牌桶限速（所有线程共享）
-        _global_acquire()
+        _rate_limit(0.35)
         try:
-            df = pro.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+            df = pro.daily(trade_date=trade_date)
             return df
         except Exception as e:
             err_msg = str(e)
             if "频率超限" in err_msg or "超限" in err_msg or "rate limit" in err_msg.lower():
                 if attempt < max_retries:
                     wait_time = 61
-                    logger.warning(f"    ↪ [频率超限] {ts_code} 等待 {wait_time}s 重试 (第{attempt}次)")
+                    logger.warning(f"    ↪ [频率超限] {trade_date} 等待 {wait_time}s 重试 (第{attempt}次)")
                     time.sleep(wait_time)
                     continue
                 else:
-                    logger.warning(f"    ❌ [频率超限] {ts_code} 已达最大重试次数 ({max_retries})，放弃")
+                    logger.warning(f"    ❌ [频率超限] {trade_date} 已达最大重试次数 ({max_retries})，放弃")
                     raise
             else:
-                # 非频率超限错误，直接抛出
                 raise
-    # 所有重试均失败
-    raise RuntimeError(f"调用 pro.daily() 失败，已重试 {max_retries} 次")
+    raise RuntimeError(f"调用 pro.daily(trade_date={trade_date}) 失败，已重试 {max_retries} 次")
 
 
-def fetch_one_stock_history(ts_code: str, stock_code: str, stock_name: str,
-                            start_date: str, end_date: str,
-                            trade_dates: set, delay: float):
-    """并发任务：拉取单只股票的历史日K线（使用Tushare Pro）"""
-    local_records = []
-    try:
-        df = _call_daily_with_retry(ts_code, start_date, end_date)
+def fetch_dates_batch(session: Session, trade_dates: list, delay: float = 0.35, top_n: int = 0) -> int:
+    """
+    按日期批量拉取全市场日行情（替代旧的按股票拉取方式）。
 
-        if df is None or df.empty:
-            return []
-
-        for _, row in df.iterrows():
-            trade_date_str = str(row.get("trade_date", ""))
-            if not trade_date_str:
-                continue
-
-            # Tushare 返回 trade_date 格式为 YYYYMMDD
-            trade_date_obj = datetime.strptime(trade_date_str, "%Y%m%d").date()
-            trade_date_fmt = trade_date_obj.strftime("%Y-%m-%d")
-
-            # 只处理目标日期范围内的数据
-            if trade_dates and trade_date_fmt not in trade_dates:
-                continue
-
-            # 单位换算：vol(手→股) *100, amount(千元→元) *1000
-            record = StockDaily(
-                stock_code=stock_code,
-                trade_date=trade_date_obj,
-                open=_safe_decimal(row.get("open"), 3),
-                high=_safe_decimal(row.get("high"), 3),
-                low=_safe_decimal(row.get("low"), 3),
-                close=_safe_decimal(row.get("close"), 3),
-                pre_close=_safe_decimal(row.get("pre_close"), 3),
-                change=_safe_decimal(row.get("change"), 3),
-                pct_chg=_safe_decimal(row.get("pct_chg"), 6),
-                volume=_safe_int(row.get("vol"), multiplier=100),    # 手 → 股
-                amount=_safe_decimal(row.get("amount"), 2),          # 千元
-            )
-
-            # amount * 1000 从千元转元
-            if record.amount is not None:
-                record.amount = _safe_decimal(float(record.amount) * 1000, 2)
-
-            local_records.append(record)
-
-        # 单线程内的额外抖动延迟（不参与全局限速，仅做微调）
-        time.sleep(delay * 0.5)
-        _update_progress()
-        return local_records
-
-    except Exception as e:
-        logger.warning(f"  ⚠️ [{stock_code}] {stock_name} 获取失败: {e}")
-        return []
-
-
-def _get_existing_keys(session, trade_dates: list) -> set:
-    """查询数据库中已存在的 (stock_code, trade_date) 组合"""
+    每个交易日调用 1 次 pro.daily(trade_date=...) 即可获取全市场数据，
+    相比按股票拉取（5000+次请求）效率提升 5000 倍。
+    """
     if not trade_dates:
-        return set()
-    date_tuple = tuple(trade_dates)
-    sql = text("SELECT stock_code, trade_date FROM stock_daily WHERE trade_date IN :dates")
-    result = session.execute(sql, {"dates": date_tuple}).fetchall()
-    return {(str(r[0]), str(r[1])) for r in result}
-
-
-def fetch_history_bulk(db: Session, codes_and_ts: list, start_date: str, end_date: str,
-                       trade_dates: list, workers: int, delay: float, top_n: int = 0) -> int:
-    """批量拉取多个股票的历史日K线"""
-    if not codes_and_ts:
         return 0
 
-    global TOTAL_STOCKS
-    global TOTAL_DONE
-
-    # 查已存在的记录，避免重复写入
-    existing_keys = _get_existing_keys(db, trade_dates)
-    logger.info(f"  数据库已有 {len(existing_keys)} 条(股票+日期)记录，将跳过已存在的")
-
-    # 构建任务列表
-    stock_list = []
-    for ts_code, code, name in codes_and_ts:
-        # 检查该股票在目标日期范围内是否已经有数据
-        has_all = True
-        for d in trade_dates:
-            if (str(code), str(d)) not in existing_keys:
-                has_all = False
-                break
-        if has_all:
-            continue
-        stock_list.append((ts_code, code, name))
-
-    if top_n > 0:
-        stock_list = stock_list[:top_n]
-
-    TOTAL_STOCKS = len(stock_list)
-    TOTAL_DONE = 0
-    trade_dates_set = set(trade_dates)
-
-    if not stock_list:
-        logger.info("  ✅ 所有股票数据已存在，无需拉取")
-        return 0
-
-    logger.info(f"  需要拉取 {len(stock_list)} 只股票的历史数据，并发 {workers} 线程")
-
-    # 单线程批量写入用
-    insert_session = SessionLocal()
     total_inserted = 0
-
+    insert_session = SessionLocal()
     try:
-        # 使用线程池并发拉取
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = []
-            for ts_code, code, name in stock_list:
-                future = executor.submit(
-                    fetch_one_stock_history,
-                    ts_code, code, name,
-                    start_date, end_date,
-                    trade_dates_set,
-                    delay,
+        for i, trade_date in enumerate(trade_dates):
+            trade_date_str = trade_date.replace("-", "")
+            logger.info(f"  📅 [{i+1}/{len(trade_dates)}] 拉取 {trade_date} 全市场日行情...")
+
+            df = _call_daily_by_date_with_retry(trade_date_str)
+
+            if df is None or df.empty:
+                logger.warning(f"    ⚠️ {trade_date} 无数据（非交易日/未入库）")
+                continue
+
+            if top_n > 0:
+                df = df.head(top_n)
+
+            records = []
+            for _, row in df.iterrows():
+                ts_code = str(row.get("ts_code", "")).strip()
+                if not ts_code:
+                    continue
+                stock_code = ts_code.split(".")[0]
+
+                record = StockDaily(
+                    stock_code=stock_code,
+                    trade_date=datetime.strptime(trade_date_str, "%Y%m%d").date(),
+                    open=_safe_decimal(row.get("open"), 3),
+                    high=_safe_decimal(row.get("high"), 3),
+                    low=_safe_decimal(row.get("low"), 3),
+                    close=_safe_decimal(row.get("close"), 3),
+                    pre_close=_safe_decimal(row.get("pre_close"), 3),
+                    change=_safe_decimal(row.get("change"), 3),
+                    pct_chg=_safe_decimal(row.get("pct_chg"), 6),
+                    volume=_safe_int(row.get("vol"), multiplier=100),       # 手 → 股
+                    amount=_safe_decimal(row.get("amount"), 2),             # 千元
                 )
-                futures.append(future)
+                if record.amount is not None:
+                    record.amount = _safe_decimal(float(record.amount) * 1000, 2)
 
-            for future in concurrent.futures.as_completed(futures):
-                records = future.result()
-                if records:
-                    for rec in records:
-                        _batch_insert_one(insert_session, rec)
-                    total_inserted += len(records)
+                records.append(record)
 
-        # 写入剩余未刷新的批次
+            if records:
+                _batch_insert_many(insert_session, records)
+                total_inserted += len(records)
+                logger.info(f"    ✅ {trade_date} -> {len(records)} 条")
+
         _flush_batch(insert_session)
-        logger.info(f"  ✅ 历史数据拉取完成，共写入 {total_inserted} 条记录")
+        logger.info(f"  ✅ 批量拉取完成，共写入 {total_inserted} 条记录")
         return total_inserted
 
     except Exception as e:
-        logger.error(f"  ❌ 历史数据拉取异常: {e}")
+        logger.error(f"  ❌ 批量拉取异常: {e}")
         import traceback
         traceback.print_exc()
         return total_inserted
     finally:
-        # 确保最后一批数据写入
         _flush_batch(insert_session)
         insert_session.close()
-
-
-def _rate_limit(delay: float):
-    """速率限制：睡眠 delay + 随机抖动（0~delay），模拟人类行为防封IP"""
-    if delay <= 0:
-        return
-    jitter = random.uniform(0, delay)
-    total = delay + jitter
-    time.sleep(total)
 
 
 def _safe_float(value) -> float | None:
@@ -597,25 +455,13 @@ def _safe_series_get(row, key: str) -> float | None:
         return None
 
 
-def _pick_column(df, candidates: list) -> str | None:
-    """从 DataFrame 列中按候选列表选取第一个存在的列名"""
-    for col in candidates:
-        if col in df.columns:
-            return col
-    return None
-
-
 def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
-    """③ 拉取宏观经济数据 → macro_data（使用Tushare Pro）
-
-    根据实际返回列名适配各接口。
-    """
+    """③ 拉取宏观经济数据 → macro_data（使用Tushare Pro）"""
     try:
         logger.info("正在获取宏观经济数据 (Tushare Pro)...")
 
         today = date.today()
 
-        # 检查今日是否已有数据
         existing = db.query(MacroData).filter(MacroData.data_date == today).first()
         if existing:
             logger.info("⏭️ 今日宏观数据已存在，跳过")
@@ -623,7 +469,7 @@ def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
 
         macro = MacroData(data_date=today)
 
-        # ── GDP（季度数据: cn_gdp）─ cols: quarter, gdp, gdp_yoy, pi, pi_yoy, si, si_yoy, ti, ti_yoy ──
+        # GDP
         _rate_limit(delay)
         try:
             df = pro.cn_gdp()
@@ -633,12 +479,10 @@ def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
                 macro.gdp = _safe_series_get(last, "gdp")
                 if macro.gdp_yoy is not None:
                     logger.info(f"  GDP同比: {macro.gdp_yoy}%")
-                if macro.gdp is not None:
-                    logger.info(f"  GDP: {macro.gdp}亿元")
         except Exception as e:
             logger.warning(f"  GDP获取失败: {e}")
 
-        # ── CPI（月度: cn_cpi）─ cols: month, nt_val, nt_yoy, nt_mom, ... ──
+        # CPI
         _rate_limit(delay)
         try:
             df = pro.cn_cpi()
@@ -651,7 +495,7 @@ def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
         except Exception as e:
             logger.warning(f"  CPI获取失败: {e}")
 
-        # ── PPI（月度: cn_ppi）─ cols: month, ppi_yoy, ... ──
+        # PPI
         _rate_limit(delay)
         try:
             df = pro.cn_ppi()
@@ -663,7 +507,7 @@ def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
         except Exception as e:
             logger.warning(f"  PPI获取失败: {e}")
 
-        # ── PMI（月度: cn_pmi）─ 频率限制1次/小时 ──
+        # PMI
         _rate_limit(delay)
         try:
             df = pro.cn_pmi(fields='month,pmi010000')
@@ -675,22 +519,21 @@ def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
         except Exception as e:
             logger.warning(f"  PMI获取失败: {e}")
 
-        # ── M2（货币供应量：cn_m，月度）──
+        # M2
         _rate_limit(delay)
         try:
             df = pro.cn_m(fields='month,m2,m2_yoy')
             if df is not None and not df.empty:
-                # 过滤掉空值，取最新非空行
                 valid = df.dropna(subset=['m2_yoy'])
                 if not valid.empty:
                     last = valid.iloc[-1]
                     macro.m2_yoy = _safe_series_get(last, "m2_yoy")
                     if macro.m2_yoy is not None:
-                        logger.info(f"  M2同比: {macro.m2_yoy}% (月份: {last.get('month')})")
+                        logger.info(f"  M2同比: {macro.m2_yoy}%")
         except Exception as e:
             logger.warning(f"  M2获取失败: {e}")
 
-        # ── SHIBOR（日频: shibor）─ cols: date, on, 1w, 2w, 1m, 3m, 6m, 9m, 1y ──
+        # SHIBOR
         _rate_limit(delay)
         try:
             today_str = today.strftime("%Y%m%d")
@@ -706,56 +549,48 @@ def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
         except Exception as e:
             logger.warning(f"  Shibor获取失败: {e}")
 
-        # ── 美元兑人民币汇率 ── 用户确认不需要，跳过
-        _rate_limit(delay)
-        pass
-
-        # ── 沪深港通资金（日频: moneyflow_hsgt）─ cols: trade_date, ggt_ss, ggt_sz, hgt, sgt, north_money, south_money ──
+        # 沪深港通
         _rate_limit(delay)
         try:
             today_str = today.strftime("%Y%m%d")
             df = pro.moneyflow_hsgt(start_date=today_str, end_date=today_str)
             if df is not None and not df.empty:
                 last = df.iloc[-1]
-                # 所有值以字符串形式存储，需转换
                 macro.hgt = _safe_series_get(last, "hgt")
                 macro.sgt = _safe_series_get(last, "sgt")
                 macro.north_flow = _safe_series_get(last, "north_money")
                 if macro.hgt is not None:
                     logger.info(f"  沪股通: {macro.hgt:.2f}亿, 深股通: {macro.sgt:.2f}亿")
-                if macro.north_flow is not None:
-                    logger.info(f"  北向资金合计: {macro.north_flow:.2f}亿")
         except Exception as e:
             logger.warning(f"  沪深港通获取失败: {e}")
 
-        # ── 美国国债收益率曲线（日频: us_tycr）─ 取3个代表性品种 ──
+        # 美国国债
         _rate_limit(delay)
         try:
             today_str = today.strftime("%Y%m%d")
             df = pro.us_tycr(start_date=today_str, end_date=today_str)
             if df is not None and not df.empty:
                 last = df.iloc[-1]
-                macro.us_y3m = _safe_series_get(last, "m3")    # 3个月（短期代表）
-                macro.us_y2y = _safe_series_get(last, "y2")    # 2年期（中期代表）
-                macro.us_y10y = _safe_series_get(last, "y10")  # 10年期（长期基准）
+                macro.us_y3m = _safe_series_get(last, "m3")
+                macro.us_y2y = _safe_series_get(last, "y2")
+                macro.us_y10y = _safe_series_get(last, "y10")
                 if macro.us_y10y is not None:
                     logger.info(f"  美国国债 3m: {macro.us_y3m}%, 2y: {macro.us_y2y}%, 10y: {macro.us_y10y}%")
         except Exception as e:
             logger.warning(f"  美国国债收益率获取失败: {e}")
 
-        # ── 社会融资规模（月度: sf_month）─ ──
+        # 社融
         _rate_limit(delay)
         try:
             df = pro.sf_month(fields='month,stk_endval')
             if df is not None and not df.empty:
-                # 过滤掉空值，取最新非空行
                 valid = df.dropna(subset=['stk_endval'])
                 if not valid.empty:
                     last = valid.iloc[-1]
                     val = _safe_series_get(last, "stk_endval")
                     if val is not None:
                         macro.margin_balance = round(val, 2)
-                        logger.info(f"  社融存量期末值: {macro.margin_balance}万亿元 (月份: {last.get('month')})")
+                        logger.info(f"  社融存量期末值: {macro.margin_balance}万亿元")
         except Exception as e:
             logger.warning(f"  社融存量获取失败: {e}")
 
@@ -772,7 +607,6 @@ def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
 def main():
     args = parse_args()
 
-    # 确保表存在
     ensure_tables_exist()
 
     # 确定要拉取的日期列表
@@ -786,11 +620,23 @@ def main():
             current -= timedelta(days=1)
         dates.reverse()
         logger.info(f"将拉取最近 {len(dates)} 个交易日的历史数据: {dates[0]} ~ {dates[-1]}")
-    elif args.date:
-        dates = [args.date]
+    elif len(args.dates) == 2:
+        start = datetime.strptime(args.dates[0], "%Y-%m-%d")
+        end = datetime.strptime(args.dates[1], "%Y-%m-%d")
+        dates = []
+        current = start
+        while current <= end:
+            if is_trade_day(current):
+                dates.append(current.strftime("%Y-%m-%d"))
+            current += timedelta(days=1)
+        logger.info(f"日期区间 {args.dates[0]} ~ {args.dates[1]}: {len(dates)} 个交易日")
+    elif len(args.dates) == 1:
+        dates = [args.dates[0]]
+        logger.info(f"指定日期: {dates[0]}")
     else:
         latest = get_latest_trade_day()
         dates = [latest.strftime("%Y-%m-%d")]
+        logger.info(f"默认最近交易日: {dates[0]}")
 
     db = SessionLocal()
     try:
@@ -803,36 +649,15 @@ def main():
         else:
             fetch_stock_basic(db)
 
-        # 获取所有股票代码 (带 ts_code 映射)
-        stocks = db.query(StockBasic.stock_code, StockBasic.stock_name).filter(
-            StockBasic.is_active == 1
-        ).all()
-        # 构建 (ts_code, stock_code, stock_name) 元组列表
-        codes_and_ts = [
-            (get_ts_code(s.stock_code), s.stock_code, s.stock_name)
-            for s in stocks
-        ]
-        logger.info(f"📋 待处理股票数: {len(codes_and_ts)}")
-
-        if not codes_and_ts:
-            logger.warning("⚠️ 没有可用的股票")
-            return
-
-        # ========== ② 批量拉取历史日K线 ==========
+        # ========== ② 按日期批量拉取日K线（不再按股票拉取）==========
         logger.info(f"\n{'='*50}")
-        logger.info("📊 开始批量拉取历史日K线数据 (Tushare Pro)")
+        logger.info("📊 按日期批量拉取日K线 (pro.daily(trade_date=...))")
+        logger.info("    每天1次请求拉全市场 → 替代旧版按股票拉取(5000+次)")
         logger.info(f"{'='*50}")
 
-        start_date = dates[0].replace("-", "")
-        end_date = dates[-1].replace("-", "")
-
-        total_records = fetch_history_bulk(
-            db=db,
-            codes_and_ts=codes_and_ts,
-            start_date=start_date,
-            end_date=end_date,
+        total_records = fetch_dates_batch(
+            session=db,
             trade_dates=dates,
-            workers=args.workers,
             delay=args.delay,
             top_n=args.top,
         )
@@ -849,7 +674,6 @@ def main():
         logger.info("📊 采集完成统计")
         logger.info(f"{'='*50}")
         logger.info(f"  处理交易日: {len(dates)} 天 ({dates[0]} ~ {dates[-1]})")
-        logger.info(f"  处理股票数: {len(codes_and_ts)} 只")
         logger.info(f"  写入行情数据: {total_records} 条")
         logger.info(f"  数据库股票总数: {db.query(StockBasic).count()}")
         logger.info(f"  日行情总记录数: {db.query(StockDaily).count()}")
