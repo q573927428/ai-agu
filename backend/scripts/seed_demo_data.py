@@ -13,21 +13,21 @@ from app.models.macro import MacroData
 
 # 少量股票示例（真实A股代码）
 DEMO_STOCKS = [
-    {"stock_code": "600519", "stock_name": "贵州茅台", "industry": "食品饮料", "market": "SH"},
-    {"stock_code": "000858", "stock_name": "五粮液",   "industry": "食品饮料", "market": "SZ"},
-    {"stock_code": "600036", "stock_name": "招商银行", "industry": "银行",     "market": "SH"},
-    {"stock_code": "601318", "stock_name": "中国平安", "industry": "保险",     "market": "SH"},
-    {"stock_code": "000333", "stock_name": "美的集团", "industry": "家电",     "market": "SZ"},
-    {"stock_code": "600276", "stock_name": "恒瑞医药", "industry": "医药生物", "market": "SH"},
-    {"stock_code": "002415", "stock_name": "海康威视", "industry": "计算机",   "market": "SZ"},
-    {"stock_code": "300750", "stock_name": "宁德时代", "industry": "电力设备", "market": "SZ"},
-    {"stock_code": "600887", "stock_name": "伊利股份", "industry": "食品饮料", "market": "SH"},
-    {"stock_code": "000002", "stock_name": "万科A",    "industry": "房地产",   "market": "SZ"},
-    {"stock_code": "600030", "stock_name": "中信证券", "industry": "证券",     "market": "SH"},
-    {"stock_code": "002594", "stock_name": "比亚迪",   "industry": "汽车",     "market": "SZ"},
-    {"stock_code": "601166", "stock_name": "兴业银行", "industry": "银行",     "market": "SH"},
-    {"stock_code": "000568", "stock_name": "泸州老窖", "industry": "食品饮料", "market": "SZ"},
-    {"stock_code": "600900", "stock_name": "长江电力", "industry": "公用事业", "market": "SH"},
+    {"ts_code": "600519.SH", "stock_code": "600519", "stock_name": "贵州茅台", "area": "贵州", "industry": "食品饮料", "cnspell": "GZMT", "market": "主板", "exchange": "SSE", "list_date": "2001-08-27", "is_hs": "H"},
+    {"ts_code": "000858.SZ", "stock_code": "000858", "stock_name": "五粮液",   "area": "四川", "industry": "食品饮料", "cnspell": "WLY", "market": "主板", "exchange": "SZSE", "list_date": "1998-04-27", "is_hs": "H"},
+    {"ts_code": "600036.SH", "stock_code": "600036", "stock_name": "招商银行", "area": "深圳", "industry": "银行",     "cnspell": "ZSYH", "market": "主板", "exchange": "SSE", "list_date": "2002-04-09", "is_hs": "H"},
+    {"ts_code": "601318.SH", "stock_code": "601318", "stock_name": "中国平安", "area": "深圳", "industry": "保险",     "cnspell": "ZGPA", "market": "主板", "exchange": "SSE", "list_date": "2007-03-01", "is_hs": "H"},
+    {"ts_code": "000333.SZ", "stock_code": "000333", "stock_name": "美的集团", "area": "广东", "industry": "家电",     "cnspell": "MDJT", "market": "主板", "exchange": "SZSE", "list_date": "2013-09-18", "is_hs": "H"},
+    {"ts_code": "600276.SH", "stock_code": "600276", "stock_name": "恒瑞医药", "area": "江苏", "industry": "医药生物", "cnspell": "HRYY", "market": "主板", "exchange": "SSE", "list_date": "2000-10-18", "is_hs": "H"},
+    {"ts_code": "002415.SZ", "stock_code": "002415", "stock_name": "海康威视", "area": "浙江", "industry": "计算机",   "cnspell": "HKWS", "market": "中小板", "exchange": "SZSE", "list_date": "2010-05-28", "is_hs": "H"},
+    {"ts_code": "300750.SZ", "stock_code": "300750", "stock_name": "宁德时代", "area": "福建", "industry": "电力设备", "cnspell": "NDSD", "market": "创业板", "exchange": "SZSE", "list_date": "2018-06-11", "is_hs": "H"},
+    {"ts_code": "600887.SH", "stock_code": "600887", "stock_name": "伊利股份", "area": "内蒙古", "industry": "食品饮料", "cnspell": "YLGF", "market": "主板", "exchange": "SSE", "list_date": "1996-03-12", "is_hs": "H"},
+    {"ts_code": "000002.SZ", "stock_code": "000002", "stock_name": "万科A",    "area": "深圳", "industry": "房地产",   "cnspell": "WKA", "market": "主板", "exchange": "SZSE", "list_date": "1991-01-29", "is_hs": "H"},
+    {"ts_code": "600030.SH", "stock_code": "600030", "stock_name": "中信证券", "area": "广东", "industry": "证券",     "cnspell": "ZXZQ", "market": "主板", "exchange": "SSE", "list_date": "2003-01-06", "is_hs": "H"},
+    {"ts_code": "002594.SZ", "stock_code": "002594", "stock_name": "比亚迪",   "area": "深圳", "industry": "汽车",     "cnspell": "BYD", "market": "主板", "exchange": "SZSE", "list_date": "2011-06-30", "is_hs": "H"},
+    {"ts_code": "601166.SH", "stock_code": "601166", "stock_name": "兴业银行", "area": "福建", "industry": "银行",     "cnspell": "XYYH", "market": "主板", "exchange": "SSE", "list_date": "2007-02-05", "is_hs": "H"},
+    {"ts_code": "000568.SZ", "stock_code": "000568", "stock_name": "泸州老窖", "area": "四川", "industry": "食品饮料", "cnspell": "LZLJ", "market": "主板", "exchange": "SZSE", "list_date": "1994-05-09", "is_hs": "H"},
+    {"ts_code": "600900.SH", "stock_code": "600900", "stock_name": "长江电力", "area": "北京", "industry": "公用事业", "cnspell": "CJDL", "market": "主板", "exchange": "SSE", "list_date": "2003-11-18", "is_hs": "H"},
 ]
 
 
@@ -41,7 +41,10 @@ def seed_data():
         for s in DEMO_STOCKS:
             existing = db.query(StockBasic).filter(StockBasic.stock_code == s["stock_code"]).first()
             if not existing:
-                db.add(StockBasic(**s, is_active=1, list_date=date(2020, 1, 1)))
+                s_copy = dict(s)
+                if isinstance(s_copy.get("list_date"), str):
+                    s_copy["list_date"] = datetime.strptime(s_copy["list_date"], "%Y-%m-%d").date()
+                db.add(StockBasic(**s_copy, is_active=1))
         db.commit()
         logger.info(f"✅ 写入 {len(DEMO_STOCKS)} 只股票")
 
@@ -81,6 +84,9 @@ def seed_data():
                 change = random.uniform(-0.03, 0.03)
                 price = base * (1 + change * (all_dates.index(td) + 1) / 90)
                 
+                pct_chg = random.uniform(-3.0, 3.0)
+                pre_close = round(price / (1 + pct_chg / 100), 2)
+                change = round(price - pre_close, 3)
                 existing = db.query(StockDaily).filter(
                     StockDaily.stock_code == code,
                     StockDaily.trade_date == td
@@ -89,18 +95,15 @@ def seed_data():
                     db.add(StockDaily(
                         stock_code=code,
                         trade_date=td,
-                        open=round(price * 0.998, 2),
-                        high=round(price * 1.015, 2),
-                        low=round(price * 0.985, 2),
-                        close=round(price, 2),
-                        pre_close=round(price * 0.997, 2),
+                        open=round(price * 0.998, 3),
+                        high=round(price * 1.015, 3),
+                        low=round(price * 0.985, 3),
+                        close=round(price, 3),
+                        pre_close=pre_close,
+                        change=change,
+                        pct_chg=round(pct_chg, 6),
                         volume=int(random.uniform(1e6, 5e7)),
                         amount=round(price * random.uniform(1e7, 5e7), 2),
-                        turnover_rate=round(random.uniform(0.5, 5), 4),
-                        pe_ttm=round(random.uniform(10, 50), 2),
-                        pb=round(random.uniform(1, 10), 2),
-                        total_mv=round(price * random.uniform(1e8, 5e9), 2),
-                        float_mv=round(price * random.uniform(5e7, 2e9), 2),
                     ))
                     count += 1
         db.commit()
@@ -112,10 +115,13 @@ def seed_data():
         if not existing_macro:
             db.add(MacroData(
                 data_date=date.today(),
-                gdp_yoy=5.2, cpi_yoy=0.3, pmi=50.8,
-                m2_yoy=7.4, shibor_1m=1.85,
-                bond_10y_yield=2.28, credit_spread=0.85,
-                usdcny=7.24, market_sentiment=0.65,
+                gdp_yoy=5.2, gdp=1260582.00,
+                cpi_yoy=0.3, cpi_val=112.50, ppi_yoy=0.1,
+                pmi=50.8,
+                m2_yoy=7.4,
+                shibor_on=1.32, shibor_1w=1.38, shibor_1m=1.85, shibor_1y=1.46,
+                hgt=179961.34, sgt=224809.37, north_flow=404770.71,
+                margin_balance=15000.00,
             ))
             db.commit()
             logger.info("✅ 写入宏观数据")

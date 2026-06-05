@@ -45,9 +45,13 @@ def get_stock_detail(code: str, db: Session = Depends(get_db)) -> ApiResponse:
         },
         "latest_daily": {
             "close": float(detail["latest_daily"].close) if detail["latest_daily"] else None,
-            "pe_ttm": float(detail["latest_daily"].pe_ttm) if detail["latest_daily"] else None,
-            "pb": float(detail["latest_daily"].pb) if detail["latest_daily"] else None,
-            "turnover_rate": float(detail["latest_daily"].turnover_rate) if detail["latest_daily"] else None,
+            "open": float(detail["latest_daily"].open) if detail["latest_daily"] else None,
+            "high": float(detail["latest_daily"].high) if detail["latest_daily"] else None,
+            "low": float(detail["latest_daily"].low) if detail["latest_daily"] else None,
+            "pre_close": float(detail["latest_daily"].pre_close) if detail["latest_daily"] else None,
+            "volume": int(detail["latest_daily"].volume) if detail["latest_daily"] else None,
+            "amount": float(detail["latest_daily"].amount) if detail["latest_daily"] else None,
+            "pct_chg": float(detail["latest_daily"].pct_chg) if detail["latest_daily"] else None,
         } if detail["latest_daily"] else None,
         "latest_prediction": {
             "predict_date": str(detail["latest_prediction"].predict_date) if detail["latest_prediction"] else None,

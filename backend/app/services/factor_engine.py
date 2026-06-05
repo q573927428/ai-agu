@@ -47,7 +47,7 @@ class FactorEngine:
         return df
 
     def compute_macro_factors(self, trade_date: str) -> pd.Series:
-        """计算11个宏观因子"""
+        """计算宏观因子"""
         macro = self.db.query(MacroData).order_by(MacroData.data_date.desc()).first()
         if not macro:
             return pd.Series(dtype=float)
@@ -55,15 +55,19 @@ class FactorEngine:
         return pd.Series({
             "macro_gdp_yoy": float(macro.gdp_yoy or 0),
             "macro_cpi_yoy": float(macro.cpi_yoy or 0),
+            "macro_ppi_yoy": float(macro.ppi_yoy or 0),
             "macro_pmi": float(macro.pmi or 0),
             "macro_m2_yoy": float(macro.m2_yoy or 0),
+            "macro_shibor_on": float(macro.shibor_on or 0),
             "macro_shibor_1m": float(macro.shibor_1m or 0),
-            "macro_bond_10y_yield": float(macro.bond_10y_yield or 0),
-            "macro_credit_spread": float(macro.credit_spread or 0),
             "macro_usdcny": float(macro.usdcny or 0),
-            "macro_market_sentiment": float(macro.market_sentiment or 0),
-            "macro_margin_trend": 0,
-            "macro_north_flow_5d": float(macro.north_flow or 0),
+            "macro_hgt": float(macro.hgt or 0),
+            "macro_sgt": float(macro.sgt or 0),
+            "macro_north_flow": float(macro.north_flow or 0),
+            "macro_margin_balance": float(macro.margin_balance or 0),
+            "macro_us_y3m": float(macro.us_y3m or 0),
+            "macro_us_y2y": float(macro.us_y2y or 0),
+            "macro_us_y10y": float(macro.us_y10y or 0),
         })
 
     def compute_stock_factors(self, stock_code: str, trade_date: str) -> dict:
@@ -90,7 +94,7 @@ class FactorEngine:
         closes = [float(r.close) for r in daily_records if r.close]
         volumes = [float(r.volume) for r in daily_records if r.volume]
         amounts = [float(r.amount) for r in daily_records if r.amount]
-        turnovers = [float(r.turnover_rate) for r in daily_records if r.turnover_rate]
+        turnovers = [float(r.pct_chg or 0) for r in daily_records if r.pct_chg is not None]
 
         if len(closes) < 5:
             return {}
@@ -120,10 +124,10 @@ class FactorEngine:
         # 最新一日的数据
         latest = daily_records[-1]
 
-        # S08-S10: 估值因子
-        factors["stock_pe_ttm"] = float(latest.pe_ttm or 0)
-        factors["stock_pb"] = float(latest.pb or 0)
-        factors["stock_ps_ttm"] = float(latest.ps or 0)
+        # S08-S10: 估值因子（daily接口不含，暂为0）
+        factors["stock_pe_ttm"] = 0
+        factors["stock_pb"] = 0
+        factors["stock_ps_ttm"] = 0
 
         # S17: 20日动量（剔除最近1日）
         factors["stock_momentum_20d"] = float(closes_arr[-2] / closes_arr[-min(21, len(closes_arr))] - 1) if len(closes_arr) >= 21 else 0
@@ -131,8 +135,8 @@ class FactorEngine:
         # S18: 5日反转
         factors["stock_reversal_5d"] = -factors["stock_return_5d"]
 
-        # S19: 规模因子
-        factors["stock_size_factor"] = float(np.log(float(latest.total_mv or 1)))
+        # S19: 规模因子（daily接口不含总市值，暂为0）
+        factors["stock_size_factor"] = 0
 
         # S20: 非流动性
         if len(returns) >= 20 and len(amounts) >= 20:
