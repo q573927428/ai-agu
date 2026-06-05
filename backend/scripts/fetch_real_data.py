@@ -72,6 +72,39 @@ def extract_symbol(ts_code: str) -> str:
 # - pct_chg: 涨跌幅(%)
 # - 不含 turnover_rate
 
+# ---------- 全局速率限制（令牌桶）----------
+# Tushare 免费版: 500次/分钟 → 满负荷约 8.33 req/s
+# 留安全余量，设 TARGET_RATE = 8 req/s (0.125s/req)
+RATE_LIMIT_LOCK = Lock()
+RATE_LIMIT_TOKENS = 0          # 当前可用令牌数
+RATE_LIMIT_TS = time.time()    # 上次补充时间
+RATE_LIMIT_CAP = 8             # 桶容量
+RATE_LIMIT_REFILL_RATE = 8     # 每秒补充令牌数（次/秒）
+
+
+def _global_acquire(max_wait: float = 120.0) -> None:
+    """
+    全局令牌桶速率限制：确保所有线程合计不超过 RATE_LIMIT_REFILL_RATE req/s。
+    若等待超过 max_wait 秒则抛出超时异常，防止死锁。
+    """
+    global RATE_LIMIT_TOKENS, RATE_LIMIT_TS
+    start_ts = time.time()
+    while True:
+        with RATE_LIMIT_LOCK:
+            now = time.time()
+            elapsed = now - RATE_LIMIT_TS
+            # 补充令牌
+            RATE_LIMIT_TOKENS = min(RATE_LIMIT_CAP, RATE_LIMIT_TOKENS + elapsed * RATE_LIMIT_REFILL_RATE)
+            RATE_LIMIT_TS = now
+            if RATE_LIMIT_TOKENS >= 1:
+                RATE_LIMIT_TOKENS -= 1
+                return
+        # 无可用令牌，等待
+        time.sleep(0.01)
+        if time.time() - start_ts > max_wait:
+            raise TimeoutError("全局速率限制等待超时")
+
+
 # 并发控制
 INSERT_LOCK = Lock()
 BATCH_RECORDS = []  # 全局批量插入缓冲区
@@ -90,10 +123,10 @@ def parse_args():
     parser.add_argument("--skip-macro", action="store_true", help="跳过宏观数据")
     parser.add_argument("--skip-financial", action="store_true", help="跳过财务数据")
     parser.add_argument("--skip-stock-basic", action="store_true", help="跳过股票基础信息拉取")
-    parser.add_argument("--delay", type=float, default=0.1,
-                        help="每次请求间隔秒数 (Tushare免费版限流，默认0.1s)")
-    parser.add_argument("--workers", type=int, default=5,
-                        help="并发线程数 (默认5，Tushare建议低并发)")
+    parser.add_argument("--delay", type=float, default=0.15,
+                        help="每次请求间隔秒数 (Tushare免费版限流500次/分钟，建议0.15~0.2s)")
+    parser.add_argument("--workers", type=int, default=3,
+                        help="并发线程数 (默认3，Tushare建议低并发)")
     return parser.parse_args()
 
 
@@ -239,32 +272,109 @@ def _batch_insert_one(session, record: StockDaily):
         _flush_batch(session)
 
 
+def _upsert_stock_daily(session, rec: StockDaily) -> bool:
+    """
+    使用 INSERT ... ON DUPLICATE KEY UPDATE 原子化写入。
+    避免 session.merge() 按主键匹配失效导致重复键错误的问题。
+    """
+    from sqlalchemy import text
+    stmt = text("""
+        INSERT INTO stock_daily (stock_code, trade_date, open, high, low, close, pre_close, `change`, pct_chg, volume, amount)
+        VALUES (:stock_code, :trade_date, :open, :high, :low, :close, :pre_close, :change_val, :pct_chg, :volume, :amount)
+        ON DUPLICATE KEY UPDATE
+            open = VALUES(open),
+            high = VALUES(high),
+            low = VALUES(low),
+            close = VALUES(close),
+            pre_close = VALUES(pre_close),
+            `change` = VALUES(`change`),
+            pct_chg = VALUES(pct_chg),
+            volume = VALUES(volume),
+            amount = VALUES(amount)
+    """)
+    session.execute(stmt, {
+        "stock_code": rec.stock_code,
+        "trade_date": rec.trade_date,
+        "open": rec.open,
+        "high": rec.high,
+        "low": rec.low,
+        "close": rec.close,
+        "pre_close": rec.pre_close,
+        "change_val": rec.change,
+        "pct_chg": rec.pct_chg,
+        "volume": rec.volume,
+        "amount": rec.amount,
+    })
+    session.commit()
+    return True
+
+
 def _flush_batch(session):
-    """批量写入并清空缓冲区"""
+    """批量写入并清空缓冲区 — 使用多行 INSERT ... ON DUPLICATE KEY UPDATE"""
     global BATCH_RECORDS
     if not BATCH_RECORDS:
         return
     batch = BATCH_RECORDS
     BATCH_RECORDS = []
-    try:
-        session.bulk_save_objects(batch)
-        session.commit()
-        logger.info(f"  📦 批量写入 {len(batch)} 条")
-    except Exception as e:
-        logger.warning(f"  ⚠️ 批量写入失败，逐条回退: {e}")
-        session.rollback()
-        success = 0
-        for rec in batch:
-            try:
-                # 使用 merge 代替 add：若记录已存在则更新，不存在则插入，避免重复键错误
-                session.merge(rec)
-                session.commit()
-                success += 1
-            except Exception as ind_e:
-                session.rollback()
-                logger.warning(f"    ↪ 跳过重复记录: {rec.stock_code} {rec.trade_date} -> {ind_e}")
-        if success > 0:
-            logger.info(f"  📦 逐条回退完成，成功写入 {success}/{len(batch)} 条，跳过 {len(batch) - success} 条重复")
+    chunk_size = 2000
+    MAX_SQL_PARAMS = 500  # pymysql 安全上限
+    # 根据 MAX_SQL_PARAMS (每行11个参数) 计算实际 chunk_size
+    chunk_size = min(chunk_size, MAX_SQL_PARAMS // 11)
+    total_written = 0
+    for chunk_start in range(0, len(batch), chunk_size):
+        chunk = batch[chunk_start:chunk_start + chunk_size]
+        try:
+            value_clauses = []
+            params = {}
+            for i, rec in enumerate(chunk):
+                suffix = f"_{i}"
+                value_clauses.append(
+                    f"(:stock_code{suffix}, :trade_date{suffix}, :open{suffix}, :high{suffix}, "
+                    f":low{suffix}, :close{suffix}, :pre_close{suffix}, :change_val{suffix}, "
+                    f":pct_chg{suffix}, :volume{suffix}, :amount{suffix})"
+                )
+                params.update({
+                    f"stock_code{suffix}": rec.stock_code,
+                    f"trade_date{suffix}": rec.trade_date,
+                    f"open{suffix}": rec.open,
+                    f"high{suffix}": rec.high,
+                    f"low{suffix}": rec.low,
+                    f"close{suffix}": rec.close,
+                    f"pre_close{suffix}": rec.pre_close,
+                    f"change_val{suffix}": rec.change,
+                    f"pct_chg{suffix}": rec.pct_chg,
+                    f"volume{suffix}": rec.volume,
+                    f"amount{suffix}": rec.amount,
+                })
+            values_str = ",\n".join(value_clauses)
+            stmt = text(f"""
+                INSERT INTO stock_daily (stock_code, trade_date, open, high, low, close, pre_close, `change`, pct_chg, volume, amount)
+                VALUES {values_str}
+                ON DUPLICATE KEY UPDATE
+                    open = VALUES(open),
+                    high = VALUES(high),
+                    low = VALUES(low),
+                    close = VALUES(close),
+                    pre_close = VALUES(pre_close),
+                    `change` = VALUES(`change`),
+                    pct_chg = VALUES(pct_chg),
+                    volume = VALUES(volume),
+                    amount = VALUES(amount)
+            """)
+            session.execute(stmt, params)
+            session.commit()
+            total_written += len(chunk)
+        except Exception as e:
+            logger.warning(f"  ⚠️ 批量 upsert 失败({len(chunk)}条)，逐条回退: {e}")
+            session.rollback()
+            for rec in chunk:
+                try:
+                    _upsert_stock_daily(session, rec)
+                    total_written += 1
+                except Exception as ind_e:
+                    session.rollback()
+                    logger.warning(f"    ↪ 跳过记录: {rec.stock_code} {rec.trade_date} -> {ind_e}")
+    logger.info(f"  📦 批量写入完成，共 {total_written}/{len(batch)} 条")
 
 
 def _update_progress():
@@ -279,18 +389,43 @@ def _update_progress():
         logger.info(f"  📊 整体进度: {done}/{total} ({pct:.1f}%)")
 
 
+def _call_daily_with_retry(ts_code: str, start_date: str, end_date: str,
+                           max_retries: int = 3) -> pd.DataFrame:
+    """
+    调用 pro.daily()，支持频率超限自动重试（等待61s），
+    每次调用前先通过全局令牌桶 _global_acquire() 限速。
+    """
+    for attempt in range(1, max_retries + 1):
+        # 1) 全局令牌桶限速（所有线程共享）
+        _global_acquire()
+        try:
+            df = pro.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+            return df
+        except Exception as e:
+            err_msg = str(e)
+            if "频率超限" in err_msg or "超限" in err_msg or "rate limit" in err_msg.lower():
+                if attempt < max_retries:
+                    wait_time = 61
+                    logger.warning(f"    ↪ [频率超限] {ts_code} 等待 {wait_time}s 重试 (第{attempt}次)")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.warning(f"    ❌ [频率超限] {ts_code} 已达最大重试次数 ({max_retries})，放弃")
+                    raise
+            else:
+                # 非频率超限错误，直接抛出
+                raise
+    # 所有重试均失败
+    raise RuntimeError(f"调用 pro.daily() 失败，已重试 {max_retries} 次")
+
+
 def fetch_one_stock_history(ts_code: str, stock_code: str, stock_name: str,
                             start_date: str, end_date: str,
                             trade_dates: set, delay: float):
     """并发任务：拉取单只股票的历史日K线（使用Tushare Pro）"""
     local_records = []
     try:
-        # Tushare pro.daily 接口
-        df = pro.daily(
-            ts_code=ts_code,
-            start_date=start_date,  # YYYYMMDD
-            end_date=end_date,      # YYYYMMDD
-        )
+        df = _call_daily_with_retry(ts_code, start_date, end_date)
 
         if df is None or df.empty:
             return []
@@ -329,7 +464,8 @@ def fetch_one_stock_history(ts_code: str, stock_code: str, stock_name: str,
 
             local_records.append(record)
 
-        _rate_limit(delay)
+        # 单线程内的额外抖动延迟（不参与全局限速，仅做微调）
+        time.sleep(delay * 0.5)
         _update_progress()
         return local_records
 
