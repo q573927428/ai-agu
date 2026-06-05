@@ -253,12 +253,18 @@ def _flush_batch(session):
     except Exception as e:
         logger.warning(f"  ⚠️ 批量写入失败，逐条回退: {e}")
         session.rollback()
+        success = 0
         for rec in batch:
             try:
-                session.add(rec)
+                # 使用 merge 代替 add：若记录已存在则更新，不存在则插入，避免重复键错误
+                session.merge(rec)
                 session.commit()
-            except Exception:
+                success += 1
+            except Exception as ind_e:
                 session.rollback()
+                logger.warning(f"    ↪ 跳过重复记录: {rec.stock_code} {rec.trade_date} -> {ind_e}")
+        if success > 0:
+            logger.info(f"  📦 逐条回退完成，成功写入 {success}/{len(batch)} 条，跳过 {len(batch) - success} 条重复")
 
 
 def _update_progress():
