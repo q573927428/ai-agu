@@ -29,10 +29,10 @@ class MacroData(Base):
     ppi_yoy = Column(DECIMAL(10, 4), comment="PPI同比(%)")          # cn_ppi -> ppi_yoy
 
     # ── 采购经理指数 (cn_pmi, 月度) ──
-    pmi = Column(DECIMAL(10, 4), comment="制造业PMI(%)")
-    pmi_service = Column(DECIMAL(10, 4), comment="非制造业PMI(%)")
+    pmi = Column(DECIMAL(10, 4), comment="制造业PMI(%)")            # cn_pmi -> pmi010000
+    pmi_service = Column(DECIMAL(10, 4), comment="非制造业PMI(%)")  # cn_pmi 无此数据
 
-    # ── 货币供应量 (月度) ──
+    # ── 货币供应量 (cn_m, 月度) ──
     m2_yoy = Column(DECIMAL(10, 4), comment="M2同比(%)")
 
     # ── 利率 / 货币市场 (日频) ──
@@ -41,16 +41,13 @@ class MacroData(Base):
     shibor_1m = Column(DECIMAL(10, 4), comment="SHIBOR 1个月(%)")  # shibor -> 1m
     shibor_1y = Column(DECIMAL(10, 4), comment="SHIBOR 1年(%)")    # shibor -> 1y
 
-    # ── 汇率 (日频) ──
-    usdcny = Column(DECIMAL(10, 6), comment="美元兑人民币(在岸)")
-
     # ── 沪深港通资金 (moneyflow_hsgt, 日频) ──
     hgt = Column(DECIMAL(20, 2), comment="沪股通资金(亿元)")        # moneyflow_hsgt -> hgt
     sgt = Column(DECIMAL(20, 2), comment="深股通资金(亿元)")        # moneyflow_hsgt -> sgt
     north_flow = Column(DECIMAL(20, 2), comment="北向资金合计(亿元)")  # moneyflow_hsgt -> north_money
 
-    # ── 融资融券 (margin, 日频) ──
-    margin_balance = Column(DECIMAL(20, 2), comment="融资余额(万元)")
+    # ── 社会融资规模 (sf_month, 月度) ──
+    margin_balance = Column(DECIMAL(20, 2), comment="社融存量期末值(万亿元)")
 
     # ── 美国国债收益率曲线 (us_tycr, 日频) ──
     us_y3m = Column(DECIMAL(10, 4), comment="美国3个月国债收益率(%)")   # m3

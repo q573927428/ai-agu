@@ -60,7 +60,6 @@ class FactorEngine:
             "macro_m2_yoy": float(macro.m2_yoy or 0),
             "macro_shibor_on": float(macro.shibor_on or 0),
             "macro_shibor_1m": float(macro.shibor_1m or 0),
-            "macro_usdcny": float(macro.usdcny or 0),
             "macro_hgt": float(macro.hgt or 0),
             "macro_sgt": float(macro.sgt or 0),
             "macro_north_flow": float(macro.north_flow or 0),

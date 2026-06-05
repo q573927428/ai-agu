@@ -524,23 +524,29 @@ def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
         # ── PMI（月度: cn_pmi）─ 频率限制1次/小时 ──
         _rate_limit(delay)
         try:
-            df = pro.cn_pmi()
+            df = pro.cn_pmi(fields='month,pmi010000')
             if df is not None and not df.empty:
                 last = df.iloc[-1]
-                macro.pmi = _safe_series_get(last, "pmi")
-                macro.pmi_service = _safe_series_get(last, "pmi_svc")
+                macro.pmi = _safe_series_get(last, "pmi010000")
                 if macro.pmi is not None:
-                    logger.info(f"  PMI: {macro.pmi}")
+                    logger.info(f"  制造业PMI: {macro.pmi}")
         except Exception as e:
             logger.warning(f"  PMI获取失败: {e}")
 
-        # ── M2（货币供应量）─ cn_m2 接口不存在，从备选采集 ──
+        # ── M2（货币供应量：cn_m，月度）──
         _rate_limit(delay)
         try:
-            # cn_m2 接口不可用，跳过（可改用 pro.money_supply_m2() 或等待接口开放）
-            pass
-        except Exception:
-            pass
+            df = pro.cn_m(fields='month,m2,m2_yoy')
+            if df is not None and not df.empty:
+                # 过滤掉空值，取最新非空行
+                valid = df.dropna(subset=['m2_yoy'])
+                if not valid.empty:
+                    last = valid.iloc[-1]
+                    macro.m2_yoy = _safe_series_get(last, "m2_yoy")
+                    if macro.m2_yoy is not None:
+                        logger.info(f"  M2同比: {macro.m2_yoy}% (月份: {last.get('month')})")
+        except Exception as e:
+            logger.warning(f"  M2获取失败: {e}")
 
         # ── SHIBOR（日频: shibor）─ cols: date, on, 1w, 2w, 1m, 3m, 6m, 9m, 1y ──
         _rate_limit(delay)
@@ -558,13 +564,9 @@ def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
         except Exception as e:
             logger.warning(f"  Shibor获取失败: {e}")
 
-        # ── 美元兑人民币汇率 ── fx_obasic 返回的是FXCM外汇平台数据(含加密货币)，不包含USDCNY
+        # ── 美元兑人民币汇率 ── 用户确认不需要，跳过
         _rate_limit(delay)
-        try:
-            # fx_obasic 不适合获取人民币汇率中间价，暂不使用
-            pass
-        except Exception as e:
-            logger.debug(f"  汇率接口跳过: {e}")
+        pass
 
         # ── 沪深港通资金（日频: moneyflow_hsgt）─ cols: trade_date, ggt_ss, ggt_sz, hgt, sgt, north_money, south_money ──
         _rate_limit(delay)
@@ -599,21 +601,21 @@ def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
         except Exception as e:
             logger.warning(f"  美国国债收益率获取失败: {e}")
 
-        # ── 融资余额（日频: margin）─ ──
+        # ── 社会融资规模（月度: sf_month）─ ──
         _rate_limit(delay)
         try:
-            today_str = today.strftime("%Y%m%d")
-            df = pro.margin(start_date=today_str, end_date=today_str)
+            df = pro.sf_month(fields='month,stk_endval')
             if df is not None and not df.empty:
-                last = df.iloc[-1]
-                bal_col = _pick_column(df, ["balance", "balance_amount", "margins"])
-                if bal_col:
-                    val = _safe_series_get(last, bal_col)
+                # 过滤掉空值，取最新非空行
+                valid = df.dropna(subset=['stk_endval'])
+                if not valid.empty:
+                    last = valid.iloc[-1]
+                    val = _safe_series_get(last, "stk_endval")
                     if val is not None:
                         macro.margin_balance = round(val, 2)
-                        logger.info(f"  融资余额: {macro.margin_balance}万元")
+                        logger.info(f"  社融存量期末值: {macro.margin_balance}万亿元 (月份: {last.get('month')})")
         except Exception as e:
-            logger.warning(f"  融资余额获取失败: {e}")
+            logger.warning(f"  社融存量获取失败: {e}")
 
         db.add(macro)
         db.commit()

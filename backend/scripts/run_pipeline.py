@@ -5,14 +5,85 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from loguru import logger
+import pandas as pd
+from sqlalchemy.orm import Session
 from app.utils.db_utils import SessionLocal
 from app.services.factor_engine import FactorEngine
 from app.services.label_generator import LabelGenerator
 from app.services.predictor import Predictor
 from app.services.ranking_service import RankingService
 from app.services.trainer import Trainer
+
+
+def _check_and_train_model(db: Session, trade_date: str) -> bool:
+    """检查是否有活跃模型，如果没有则尝试训练
+
+    Returns:
+        bool: 模型是否就绪
+    """
+    from app.models.model_record import ModelRecord
+    from app.models.stock_daily import StockDaily
+
+    has_model = db.query(ModelRecord).filter(ModelRecord.is_active == 1).first()
+    if has_model:
+        return True
+
+    logger.warning("⚠️ 没有活跃模型，尝试训练...")
+
+    # 获取已有历史交易日，用于批量计算因子
+    trade_dates = [
+        r[0] for r in db.query(StockDaily.trade_date)
+        .distinct()
+        .order_by(StockDaily.trade_date.asc())
+        .all()
+    ]
+
+    if len(trade_dates) < 25:
+        logger.warning(f"历史交易日不足(只有{len(trade_dates)}天)，无法训练")
+        return False
+
+    # 取前80%作为训练用日期
+    train_dates = [str(d) for d in trade_dates[:int(len(trade_dates) * 0.8)]]
+    if len(train_dates) < 10:
+        logger.warning("有效训练日期不足")
+        return False
+
+    logger.info(f"批量计算 {len(train_dates)} 个交易日的历史因子...")
+
+    engine = FactorEngine(db)
+    factor_count = 0
+    # 倒序遍历，保留最新的因子数据
+    for dt in reversed(train_dates):
+        df = engine.compute_all(dt)
+        if not df.empty:
+            engine.save_factors(df)
+            factor_count += len(df)
+
+    logger.info(f"历史因子计算完成: {factor_count} 条")
+
+    # 检查因子表是否有数据
+    from app.models.factor import FactorStore
+    total_factors = db.query(FactorStore).count()
+    if total_factors == 0:
+        logger.warning("因子表中无数据，无法训练")
+        return False
+
+    logger.info(f"因子表总计: {total_factors} 条")
+
+    # 训练模型
+    train_start = train_dates[0]
+    train_end = train_dates[-1]
+    trainer = Trainer(db)
+    result = trainer.train(start_date=train_start, end_date=train_end)
+
+    if result.get("status") == "success":
+        logger.info(f"✅ 模型训练成功: {result['model_version']}, IC={result['valid_ic']:.4f}")
+        return True
+    else:
+        logger.warning(f"⚠️ 模型训练失败: {result.get('message', '未知错误')}")
+        return False
 
 
 def run_pipeline(trade_date: str = None, top_n: int = 0):
@@ -45,10 +116,17 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
         labels = label_gen.generate_labels(trade_date)
         logger.info(f"✅ 标签生成完成: {len(labels)} 条")
 
+        # Step 2.5: 检查/训练模型
+        model_ready = _check_and_train_model(db, trade_date)
+
         # Step 3: 预测
         logger.info("[3/4] 预测...")
         predictor = Predictor(db)
-        predictions = predictor.predict_daily(trade_date)
+        if model_ready:
+            predictions = predictor.predict_daily(trade_date)
+        else:
+            logger.warning("模型未就绪，跳过预测")
+            predictions = pd.DataFrame()
         logger.info(f"✅ 预测完成: {len(predictions)} 只股票")
 
         # Step 4: 排名
@@ -65,6 +143,8 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
             ranking_service = RankingService(db)
             ranking_service.save_ranking_snapshot(date.today(), top50)
             logger.info(f"✅ 排名生成完成: {len(top50)} 只股票")
+        else:
+            logger.info("无预测结果，跳过排名生成")
 
         logger.info("=== 流水线运行完成 ===")
 
