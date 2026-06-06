@@ -799,7 +799,11 @@ def fetch_financial_data(db: Session, delay: float = 0.35, top_n: int = 0) -> bo
                     "bps": "bps", "cf_ps": "cashflow_ps", "div_per_share": "dividend_ps",
                 }
 
+                # 只写入目标表实际存在的字段
+                model_columns = {col.name for col in model_cls.__table__.columns}
                 for src_col, dst_col in field_map.items():
+                    if dst_col not in model_columns:
+                        continue
                     if src_col in row.index:
                         val = row.get(src_col)
                         if val is not None and not (isinstance(val, float) and np.isnan(val)):
