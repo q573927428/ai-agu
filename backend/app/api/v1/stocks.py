@@ -91,27 +91,66 @@ def get_stock_factors(code: str, db: Session = Depends(get_db)) -> ApiResponse:
 
 @router.get("/{code}/financial")
 def get_stock_financial(code: str, db: Session = Depends(get_db)) -> ApiResponse:
-    """获取股票财务数据"""
-    from app.models.financial import Financial
-    records = (
-        db.query(Financial)
-        .filter(Financial.stock_code == code)
-        .order_by(Financial.report_date.desc())
+    """获取股票财务数据（利润表 + 资产负债表 + 财务指标）"""
+    from app.models.income import Income
+    from app.models.balancesheet import Balancesheet
+    from app.models.fina_indicator import FinaIndicator
+
+    # 利润表（最近5期）
+    income_records = (
+        db.query(Income)
+        .filter(Income.stock_code == code, Income.report_type == 1)
+        .order_by(Income.end_date.desc())
         .limit(5)
         .all()
     )
+    # 资产负债表（最近5期）
+    bs_records = (
+        db.query(Balancesheet)
+        .filter(Balancesheet.stock_code == code, Balancesheet.report_type == 1)
+        .order_by(Balancesheet.end_date.desc())
+        .limit(5)
+        .all()
+    )
+    # 财务指标（最近5期）
+    ind_records = (
+        db.query(FinaIndicator)
+        .filter(FinaIndicator.stock_code == code)
+        .order_by(FinaIndicator.end_date.desc())
+        .limit(5)
+        .all()
+    )
+
     return ApiResponse(data={
         "stock_code": code,
-        "records": [
+        "income": [
             {
-                "report_date": str(r.report_date),
+                "end_date": str(r.end_date),
                 "revenue": float(r.revenue) if r.revenue else None,
                 "net_profit": float(r.net_profit) if r.net_profit else None,
+                "eps": float(r.eps) if r.eps else None,
+            }
+            for r in income_records
+        ],
+        "balancesheet": [
+            {
+                "end_date": str(r.end_date),
+                "total_assets": float(r.total_assets) if r.total_assets else None,
+                "total_liab": float(r.total_liab) if r.total_liab else None,
+                "total_equity": float(r.total_equity) if r.total_equity else None,
+            }
+            for r in bs_records
+        ],
+        "indicators": [
+            {
+                "end_date": str(r.end_date),
                 "roe": float(r.roe) if r.roe else None,
                 "roa": float(r.roa) if r.roa else None,
+                "gross_margin": float(r.gross_margin) if r.gross_margin else None,
+                "net_margin": float(r.net_margin) if r.net_margin else None,
                 "debt_ratio": float(r.debt_ratio) if r.debt_ratio else None,
             }
-            for r in records
+            for r in ind_records
         ],
     })
 

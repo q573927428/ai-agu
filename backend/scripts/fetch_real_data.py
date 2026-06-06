@@ -28,7 +28,10 @@ from app.utils.db_utils import SessionLocal, engine
 from app.models.stock import StockBasic
 from app.models.stock_daily import StockDaily
 from app.models.macro import MacroData
-from app.models.financial import Financial
+from app.models.income import Income
+from app.models.balancesheet import Balancesheet
+from app.models.cashflow import Cashflow
+from app.models.fina_indicator import FinaIndicator
 from app.models.base import Base
 from app.utils.date_utils import is_trade_day, get_latest_trade_day
 
@@ -604,6 +607,219 @@ def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
         return False
 
 
+def _financial_upsert(session: Session, table_model, records: list, unique_cols: list):
+    """批量 upsert 财务数据（逐条 INSERT ... ON DUPLICATE KEY UPDATE）"""
+    if not records:
+        return
+    table_name = table_model.__tablename__
+    for rec in records:
+        try:
+            cols = list(rec.keys())
+            # 构建唯一键条件
+            where_clause = " AND ".join([f"`{c}` = :{c}_uk" for c in unique_cols])
+            uk_params = {f"{c}_uk": rec[c] for c in unique_cols}
+            # 先查是否存在
+            stmt_check = text(f"SELECT id FROM `{table_name}` WHERE {where_clause} LIMIT 1")
+            result = session.execute(stmt_check, uk_params).fetchone()
+            if result:
+                # UPDATE
+                set_clause = ", ".join([f"`{c}` = :{c}" for c in cols])
+                stmt = text(f"UPDATE `{table_name}` SET {set_clause} WHERE id = :row_id")
+                rec["row_id"] = result[0]
+                session.execute(stmt, rec)
+            else:
+                # INSERT
+                col_names = ", ".join([f"`{c}`" for c in cols])
+                val_placeholders = ", ".join([f":{c}" for c in cols])
+                stmt = text(f"INSERT INTO `{table_name}` ({col_names}) VALUES ({val_placeholders})")
+                session.execute(stmt, rec)
+        except Exception as e:
+            session.rollback()
+            logger.warning(f"  ⚠️ 财务 upsert 跳过: {e}")
+    try:
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logger.warning(f"  ⚠️ 财务批量提交失败，逐条回退: {e}")
+        for rec in records:
+            try:
+                cols = list(rec.keys())
+                col_names = ", ".join([f"`{c}`" for c in cols])
+                val_placeholders = ", ".join([f":{c}" for c in cols])
+                stmt = text(f"INSERT INTO `{table_name}` ({col_names}) VALUES ({val_placeholders}) "
+                            f"ON DUPLICATE KEY UPDATE " +
+                            ", ".join([f"`{c}` = VALUES(`{c}`)" for c in cols if c not in unique_cols + ["id"]]))
+                session.execute(stmt, rec)
+                session.commit()
+            except Exception as ind_e:
+                session.rollback()
+                logger.warning(f"    ↪ 跳过财务记录: {ind_e}")
+
+
+def _safe_date_str(val) -> str | None:
+    """安全转换日期字符串 YYYYMMDD → YYYY-MM-DD"""
+    if val is None or (isinstance(val, float) and np.isnan(val)):
+        return None
+    s = str(val).strip()
+    if not s or s == "nan":
+        return None
+    try:
+        if len(s) == 8 and s.isdigit():
+            return datetime.strptime(s, "%Y%m%d").strftime("%Y-%m-%d")
+        return s
+    except Exception:
+        return None
+
+
+def fetch_financial_data(db: Session, delay: float = 0.35, top_n: int = 0) -> bool:
+    """
+    ④ 拉取上市公司财务数据（Tushare Pro）
+    - pro.income()        → income 表 (利润表)
+    - pro.balancesheet()  → balancesheet 表 (资产负债表)
+    - pro.cashflow()      → cashflow 表 (现金流量表)
+    - pro.fina_indicator() → fina_indicator 表 (财务指标)
+    """
+    # 获取所有股票列表
+    stocks = db.query(StockBasic.stock_code, StockBasic.ts_code).all()
+    if top_n > 0:
+        stocks = stocks[:top_n]
+    total = len(stocks)
+    logger.info(f"📊 将拉取 {total} 只股票的财务数据...")
+
+    api_configs = [
+        ("利润表", pro.income, Income, "income", ["stock_code", "end_date", "report_type"]),
+        ("资产负债表", pro.balancesheet, Balancesheet, "balancesheet", ["stock_code", "end_date", "report_type"]),
+        ("现金流量表", pro.cashflow, Cashflow, "cashflow", ["stock_code", "end_date", "report_type"]),
+        ("财务指标", pro.fina_indicator, FinaIndicator, "fina_indicator", ["stock_code", "end_date"]),
+    ]
+
+    for api_name, api_func, model_cls, table_name, unique_keys in api_configs:
+        logger.info(f"  ── 拉取 {api_name} ({table_name}) ──")
+        all_records = []
+        success_count = 0
+        skip_count = 0
+        error_count = 0
+
+        for idx, (stock_code, ts_code) in enumerate(stocks):
+            if idx % 100 == 0 and idx > 0:
+                logger.info(f"    [{idx}/{total}] {api_name} 处理中... ({success_count} 成功)")
+
+            _rate_limit(delay)
+            try:
+                # 拉取全部历史财务数据
+                df = api_func(ts_code=ts_code)
+            except Exception as e:
+                err_msg = str(e)
+                if "频率超限" in err_msg or "超限" in err_msg or "rate limit" in err_msg.lower():
+                    logger.warning(f"    ⚠️ [频率超限] 等待61s...")
+                    time.sleep(61)
+                    try:
+                        df = api_func(ts_code=ts_code)
+                    except Exception as e2:
+                        logger.warning(f"    ❌ {stock_code} {api_name} 重试仍失败: {e2}")
+                        error_count += 1
+                        continue
+                else:
+                    logger.warning(f"    ⚠️ {stock_code} {api_name} 无数据: {e}")
+                    error_count += 1
+                    continue
+
+            if df is None or df.empty:
+                skip_count += 1
+                continue
+
+            for _, row in df.iterrows():
+                end_date_str = _safe_date_str(row.get("end_date"))
+                if not end_date_str:
+                    continue
+                end_date_val = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+
+                if api_name == "财务指标":
+                    # fina_indicator 表没有 report_type
+                    rec = {
+                        "stock_code": stock_code,
+                        "end_date": end_date_val,
+                    }
+                else:
+                    report_type = int(row.get("report_type", 1)) if not (isinstance(row.get("report_type"), float) and np.isnan(row.get("report_type"))) else 1
+                    rec = {
+                        "stock_code": stock_code,
+                        "end_date": end_date_val,
+                        "report_type": report_type,
+                    }
+
+                # 通用字段映射
+                field_map = {
+                    # 利润表
+                    "revenue": "revenue", "revenue_yoy": "revenue_yoy", "cost": "cost",
+                    "sell_expense": "sell_expense", "admin_expense": "admin_expense",
+                    "fin_expense": "fin_expense", "rd_expense": "rd_expense",
+                    "operate_profit": "operating_profit", "total_profit": "total_profit",
+                    "total_profit_yoy": "total_profit_yoy",
+                    "n_income_attr_p": "net_profit", "yoy_profit": "net_profit_yoy",
+                    "non_op_income": "non_op_income", "non_op_expense": "non_op_expense",
+                    "income_tax": "income_tax", "minority_pl": "minority_pl",
+                    "basic_eps": "eps", "diluted_eps": "diluted_eps",
+                    "eps_yoy": "eps_yoy",
+                    # 资产负债表
+                    "total_assets": "total_assets", "current_assets": "current_assets",
+                    "money_cap": "money_cap", "accounts_rece": "accounts_rece",
+                    "inventory": "inventory", "fixed_assets": "fixed_assets",
+                    "intan_assets": "intan_assets", "goodwill": "goodwill",
+                    "total_liab": "total_liab", "current_liab": "current_liab",
+                    "accounts_pay": "accounts_pay", "longterm_loan": "longterm_loan",
+                    "bonds_payable": "bonds_payable",
+                    "total_hldr_eqy_exc_min_int": "total_equity",
+                    "minority_int": "minority_int",
+                    "cap_stk": "cap_stk", "cap_reserve": "cap_reserve",
+                    "surplus_reserve": "surplus_reserve", "retained_earn": "retained_earn",
+                    # 现金流量表
+                    "c_inflow_act": "oper_cash_in", "c_outflow_act": "oper_cash_out",
+                    "n_cashflow_act": "net_oper_cash",
+                    "c_inflow_inv": "inv_cash_in", "c_outflow_inv": "inv_cash_out",
+                    "n_cashflow_inv": "net_inv_cash",
+                    "c_inflow_fnc": "fin_cash_in", "c_outflow_fnc": "fin_cash_out",
+                    "n_cashflow_fnc": "net_fin_cash",
+                    "n_cashflow_net": "cash_equiv_net", "free_cashflow": "free_cashflow",
+                    # 财务指标
+                    "roe": "roe", "roa": "roa", "gross_profit_margin": "gross_margin",
+                    "net_profit_margin": "net_margin", "eps": "eps",
+                    "rd_exp_ratio": "rd_exp_ratio",
+                    "yoy_or": "revenue_yoy", "yoy_profit": "net_profit_yoy",
+                    "yoy_cashflow_act": "oper_cf_yoy", "yoy_roe": "roe_yoy",
+                    "asset_turn": "asset_turnover", "inventory_turn": "inventory_turn",
+                    "receiv_turn": "receiv_turn",
+                    "debt_ratio": "debt_ratio", "current_ratio": "current_ratio",
+                    "quick_ratio": "quick_ratio", "interest_coverage": "interest_coverage",
+                    "bps": "bps", "cf_ps": "cashflow_ps", "div_per_share": "dividend_ps",
+                }
+
+                for src_col, dst_col in field_map.items():
+                    if src_col in row.index:
+                        val = row.get(src_col)
+                        if val is not None and not (isinstance(val, float) and np.isnan(val)):
+                            rec[dst_col] = float(val)
+
+                # 避免 profit=0 被 Tushare 返回 NaN 导致无数据
+                all_records.append(rec)
+                success_count += 1
+
+            # 每500条批量写入一次
+            if len(all_records) >= 500:
+                _financial_upsert(db, model_cls, all_records, unique_keys)
+                all_records = []
+
+        # 最后一批写入
+        if all_records:
+            _financial_upsert(db, model_cls, all_records, unique_keys)
+
+        total_in_db = db.query(model_cls).count()
+        logger.info(f"    ✅ {api_name} 完成: {success_count} 条, 跳过 {skip_count}, 错误 {error_count}, 库内总计 {total_in_db}")
+
+    logger.info("✅ 所有财务数据拉取完成")
+    return True
+
+
 def main():
     args = parse_args()
 
@@ -669,6 +885,15 @@ def main():
             logger.info(f"{'='*50}")
             fetch_macro_data(db, delay=args.delay)
 
+        # ========== ④ 财务数据 ==========
+        if not args.skip_financial:
+            logger.info(f"\n{'='*50}")
+            logger.info("📊 拉取上市公司财务数据")
+            logger.info("  利润表 → income | 资产负债表 → balancesheet")
+            logger.info("  现金流量表 → cashflow | 财务指标 → fina_indicator")
+            logger.info(f"{'='*50}")
+            fetch_financial_data(db, delay=args.delay, top_n=args.top)
+
         # ========== 统计 ==========
         logger.info(f"\n{'='*50}")
         logger.info("📊 采集完成统计")
@@ -678,6 +903,10 @@ def main():
         logger.info(f"  数据库股票总数: {db.query(StockBasic).count()}")
         logger.info(f"  日行情总记录数: {db.query(StockDaily).count()}")
         logger.info(f"  宏观数据条数: {db.query(MacroData).count()}")
+        logger.info(f"  利润表记录数: {db.query(Income).count()}")
+        logger.info(f"  资产负债表记录数: {db.query(Balancesheet).count()}")
+        logger.info(f"  现金流量表记录数: {db.query(Cashflow).count()}")
+        logger.info(f"  财务指标记录数: {db.query(FinaIndicator).count()}")
 
     except KeyboardInterrupt:
         logger.warning("⚠️ 用户中断")
