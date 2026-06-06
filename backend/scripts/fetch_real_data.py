@@ -121,7 +121,12 @@ def fetch_stock_basic(db: Session, max_retries: int = 3) -> int:
         try:
             logger.info(f"正在获取全市场A股基础信息 (Tushare Pro)... 尝试 {attempt}/{max_retries}")
 
-            df = pro.stock_basic(exchange='', list_status='L')
+            df = pro.stock_basic(
+                exchange='', list_status='L',
+                fields='ts_code,symbol,name,area,industry,fullname,enname,cnspell,'
+                       'market,exchange,curr_type,list_status,list_date,delist_date,'
+                       'is_hs,act_name,act_ent_type'
+            )
             if df is None or df.empty:
                 logger.warning("未获取到股票基础信息")
                 return 0
