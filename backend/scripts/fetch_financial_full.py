@@ -238,47 +238,17 @@ def fetch_table(db: Session, api_name: str, api_func, model_cls, table_name: str
                     pass
                 rec = {"stock_code": stock_code, "end_date": end_date_val, "report_type": report_type}
 
-            # 字段映射
-            field_map = {
-                "revenue": "revenue", "revenue_yoy": "revenue_yoy", "cost": "cost",
-                "sell_expense": "sell_expense", "admin_expense": "admin_expense",
-                "fin_expense": "fin_expense", "rd_expense": "rd_expense",
-                "operate_profit": "operating_profit", "total_profit": "total_profit",
-                "total_profit_yoy": "total_profit_yoy",
-                "n_income_attr_p": "net_profit", "yoy_profit": "net_profit_yoy",
-                "non_op_income": "non_op_income", "non_op_expense": "non_op_expense",
-                "income_tax": "income_tax", "minority_pl": "minority_pl",
-                "basic_eps": "eps", "diluted_eps": "diluted_eps",
-                "eps_yoy": "eps_yoy",
-                "total_assets": "total_assets", "current_assets": "current_assets",
-                "money_cap": "money_cap", "accounts_rece": "accounts_rece",
-                "inventory": "inventory", "fixed_assets": "fixed_assets",
-                "intan_assets": "intan_assets", "goodwill": "goodwill",
-                "total_liab": "total_liab", "current_liab": "current_liab",
-                "accounts_pay": "accounts_pay", "longterm_loan": "longterm_loan",
-                "bonds_payable": "bonds_payable",
-                "total_hldr_eqy_exc_min_int": "total_equity",
-                "minority_int": "minority_int",
-                "cap_stk": "cap_stk", "cap_reserve": "cap_reserve",
-                "surplus_reserve": "surplus_reserve", "retained_earn": "retained_earn",
-                "c_inflow_act": "oper_cash_in", "c_outflow_act": "oper_cash_out",
-                "n_cashflow_act": "net_oper_cash",
-                "c_inflow_inv": "inv_cash_in", "c_outflow_inv": "inv_cash_out",
-                "n_cashflow_inv": "net_inv_cash",
-                "c_inflow_fnc": "fin_cash_in", "c_outflow_fnc": "fin_cash_out",
-                "n_cashflow_fnc": "net_fin_cash",
-                "n_cashflow_net": "cash_equiv_net", "free_cashflow": "free_cashflow",
-                "roe": "roe", "roa": "roa", "gross_profit_margin": "gross_margin",
-                "net_profit_margin": "net_margin", "eps": "eps",
-                "rd_exp_ratio": "rd_exp_ratio",
-                "yoy_or": "revenue_yoy", "yoy_profit": "net_profit_yoy",
-                "yoy_cashflow_act": "oper_cf_yoy", "yoy_roe": "roe_yoy",
-                "asset_turn": "asset_turnover", "inventory_turn": "inventory_turn",
-                "receiv_turn": "receiv_turn",
-                "debt_ratio": "debt_ratio", "current_ratio": "current_ratio",
-                "quick_ratio": "quick_ratio", "interest_coverage": "interest_coverage",
-                "bps": "bps", "cf_ps": "cashflow_ps", "div_per_share": "dividend_ps",
-            }
+            # 字段映射（基于 Tushare Pro 实际返回列名）
+            if api_name == "利润表":
+                from scripts.fix_financial_mapping import INCOME_FIELD_MAP as field_map
+            elif api_name == "资产负债表":
+                from scripts.fix_financial_mapping import BALANCESHEET_FIELD_MAP as field_map
+            elif api_name == "现金流量表":
+                from scripts.fix_financial_mapping import CASHFLOW_FIELD_MAP as field_map
+            elif api_name == "财务指标":
+                from scripts.fix_financial_mapping import FINA_INDICATOR_FIELD_MAP as field_map
+            else:
+                field_map = {}
 
             # 只写入目标表实际存在的字段
             model_columns = {col.name for col in model_cls.__table__.columns}
