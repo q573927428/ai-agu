@@ -20,7 +20,6 @@ class Income(Base):
 
     # ── 营收 ──
     revenue = Column(DECIMAL(20, 2), comment="营业总收入")
-    revenue_yoy = Column(DECIMAL(10, 4), comment="营业总收入同比增长率(%)")
     cost = Column(DECIMAL(20, 2), comment="营业总成本")
     sell_expense = Column(DECIMAL(20, 2), comment="销售费用")
     admin_expense = Column(DECIMAL(20, 2), comment="管理费用")
@@ -30,9 +29,7 @@ class Income(Base):
     # ── 利润 ──
     operating_profit = Column(DECIMAL(20, 2), comment="营业利润")
     total_profit = Column(DECIMAL(20, 2), comment="利润总额")
-    total_profit_yoy = Column(DECIMAL(10, 4), comment="利润总额同比增长率(%)")
     net_profit = Column(DECIMAL(20, 2), comment="归母净利润")
-    net_profit_yoy = Column(DECIMAL(10, 4), comment="净利润同比增长率(%)")
     non_op_income = Column(DECIMAL(20, 2), comment="营业外收入")
     non_op_expense = Column(DECIMAL(20, 2), comment="营业外支出")
     income_tax = Column(DECIMAL(20, 2), comment="所得税费用")
@@ -41,7 +38,6 @@ class Income(Base):
     # ── 每股 ──
     eps = Column(DECIMAL(10, 4), comment="基本每股收益")
     diluted_eps = Column(DECIMAL(10, 4), comment="稀释每股收益")
-    eps_yoy = Column(DECIMAL(10, 4), comment="每股收益同比增长率(%)")
 
     # ── 系统字段 ──
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")

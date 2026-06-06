@@ -28,7 +28,6 @@ INCOME_FIELD_MAP = {
     "non_oper_exp": "non_op_expense",      # 营业外支出
     "income_tax": "income_tax",        # 所得税费用
     "minority_gain": "minority_pl",    # 少数股东损益
-    "minority_pl": "minority_pl",      # (备用)
     "basic_eps": "eps",                # 基本每股收益
     "diluted_eps": "diluted_eps",      # 稀释每股收益
 }
