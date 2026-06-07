@@ -85,45 +85,6 @@
         </el-card>
       </el-col>
     </el-row>
-
-    <!-- 模型状态（快速入口） -->
-    <el-row :gutter="20" class="section">
-      <el-col :span="24">
-        <el-card shadow="hover">
-          <template #header>
-            <div class="card-header">
-              <span>模型状态</span>
-              <NuxtLink to="/models">
-                <el-button text type="primary" size="small">
-                  查看详情 <el-icon><ElIconArrowRight /></el-icon>
-                </el-button>
-              </NuxtLink>
-            </div>
-          </template>
-          <div v-if="activeModels.length > 0" class="model-compact">
-            <div class="model-info-row">
-              <span class="info-label">当前模型：</span>
-              <el-tag type="primary" size="small">{{ modelStatus.model_version || "--" }}</el-tag>
-            </div>
-            <div class="model-info-row">
-              <span class="info-label">活跃模型：</span>
-              <span class="info-value">{{ activeModels.length }} 个</span>
-            </div>
-            <div class="model-info-row">
-              <span class="info-label">最新 IC：</span>
-              <span class="info-value" :class="modelStatus.latest_ic > 0 ? 'ic-positive' : modelStatus.latest_ic < 0 ? 'ic-negative' : ''">
-                {{ modelStatus.latest_ic != null ? modelStatus.latest_ic.toFixed(4) : "--" }}
-              </span>
-            </div>
-            <div class="model-info-row">
-              <span class="info-label">最近训练：</span>
-              <span class="info-value">{{ modelStatus.last_train_date || "--" }}</span>
-            </div>
-          </div>
-          <el-empty v-else description="暂无模型记录" :image-size="60" style="margin-top: 16px" />
-        </el-card>
-      </el-col>
-    </el-row>
   </div>
 </template>
 
@@ -143,18 +104,6 @@ const marketOverview = ref<MarketOverview>({
   market_index: { sh_index: 0, sh_change: 0, sz_index: 0, sz_change: 0, cyb_index: null, cyb_change: null, hs300_index: null, hs300_change: null, zz500_index: null, zz500_change: null, kc50_index: null, kc50_change: null },
   market_stats: { up_count: 0, down_count: 0, flat_count: 0, advance_decline_ratio: 0 },
   top_industries: [],
-  model_status: {
-    model_version: "",
-    last_train_date: null,
-    latest_ic: 0,
-    is_active: false,
-  },
-});
-
-const modelStatus = computed(() => marketOverview.value.model_status);
-
-const activeModels = computed(() => {
-  return (modelStatus.value.models ?? []).filter((m) => m.is_active);
 });
 
 const marketDate = computed(() => {
@@ -264,39 +213,5 @@ function formatChangePercent(change: number | null | undefined): string {
   font-size: 13px;
   margin-top: 4px;
   font-weight: 500;
-}
-
-.model-compact {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 24px;
-  padding: 8px 0;
-}
-
-.model-info-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.model-info-row .info-label {
-  font-size: 14px;
-  color: var(--el-text-color-secondary);
-}
-
-.model-info-row .info-value {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--el-text-color-primary);
-}
-
-.model-info-row .ic-positive {
-  color: #4caf50;
-  font-weight: 600;
-}
-
-.model-info-row .ic-negative {
-  color: #f44336;
-  font-weight: 600;
 }
 </style>

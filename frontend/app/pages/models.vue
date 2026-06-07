@@ -7,8 +7,8 @@
             <div class="card-header">
               <span>模型状态</span>
               <div class="header-right">
-                <el-tag :type="modelStatus.is_active ? 'success' : 'info'" size="small">
-                  {{ modelStatus.is_active ? "模型在线" : "模型离线" }}
+              <el-tag :type="modelStatus?.is_active ? 'success' : 'info'" size="small">
+                  {{ modelStatus?.is_active ? "模型在线" : "模型离线" }}
                 </el-tag>
                 <el-tag type="success" size="small" v-if="allModels.length">
                   共 {{ allModels.length }} 个模型记录
@@ -21,13 +21,13 @@
           <!-- 最新模型概览 -->
           <el-descriptions :column="4" border size="small" class="model-summary">
             <el-descriptions-item label="当前模型版本" label-width="100">
-              <el-tag type="primary" size="small">{{ modelStatus.model_version || "--" }}</el-tag>
+              <el-tag type="primary" size="small">{{ modelStatus?.model_version || "--" }}</el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="最近训练日期" label-width="110">
-              {{ modelStatus.last_train_date || "--" }}
+              {{ modelStatus?.last_train_date || "--" }}
             </el-descriptions-item>
             <el-descriptions-item label="最新 IC" label-width="80">
-              <span :class="icClass">{{ modelStatus.latest_ic != null ? modelStatus.latest_ic.toFixed(4) : "--" }}</span>
+              <span :class="icClass">{{ modelStatus?.latest_ic != null ? modelStatus?.latest_ic.toFixed(4) : "--" }}</span>
             </el-descriptions-item>
             <el-descriptions-item label="活跃模型数" label-width="100">
               {{ activeModels.length }}
@@ -103,7 +103,7 @@ const marketOverview = ref<MarketOverview>({
 const modelStatus = computed(() => marketOverview.value.model_status);
 
 const allModels = computed(() => {
-  return modelStatus.value.models ?? [];
+  return modelStatus.value?.models ?? [];
 });
 
 const activeModels = computed(() => {
@@ -111,7 +111,7 @@ const activeModels = computed(() => {
 });
 
 const icClass = computed(() => {
-  const ic = modelStatus.value.latest_ic;
+  const ic = modelStatus.value?.latest_ic;
   if (ic == null) return "";
   return ic > 0 ? "ic-positive" : ic < 0 ? "ic-negative" : "";
 });

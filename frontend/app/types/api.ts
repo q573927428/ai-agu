@@ -108,7 +108,7 @@ export interface MarketOverview {
     advance_decline_ratio: number;
   };
   top_industries: Array<{ industry: string; return_5d: number }>;
-  model_status: {
+  model_status?: {
     model_version: string;
     last_train_date: string | null;
     latest_ic: number;
