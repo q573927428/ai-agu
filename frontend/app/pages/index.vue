@@ -214,12 +214,6 @@ function changeColor(val: number | null | undefined): string {
   return "";
 }
 
-/** 格式化涨跌值 */
-function formatChange(val: number | null | undefined): string {
-  if (val == null) return "--";
-  return val > 0 ? `+${val.toFixed(2)}` : val.toFixed(2);
-}
-
 /** 格式化涨跌幅百分比（字段已是百分比值，如 -0.74 表示 -0.74%） */
 function formatChangePercent(change: number | null | undefined): string {
   if (change == null) return "--";
