@@ -76,7 +76,7 @@ def get_stock_detail(code: str, db: Session = Depends(get_db)) -> ApiResponse:
 
 
 @router.get("/{code}/kline")
-def get_stock_kline(code: str, limit: int = Query(120, ge=30, le=500), db: Session = Depends(get_db)) -> ApiResponse:
+def get_stock_kline(code: str, limit: int = Query(120, ge=30, le=3000), db: Session = Depends(get_db)) -> ApiResponse:
     """获取股票日K线数据（用于K线图展示）"""
     service = StockService(db)
     records = service.get_stock_daily_history(code, limit)

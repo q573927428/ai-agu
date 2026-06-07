@@ -1,11 +1,11 @@
 <template>
   <div class="stock-detail">
     <div class="page-header">
+      <el-button :icon="ElIconArrowLeft" @click="goBack" text></el-button>
       <h1 class="page-title" v-if="stockBasic">
         {{ stockBasic.stock_name }} ({{ stockBasic.stock_code }})
         <el-tag size="small" :type="marketTagType" class="market-tag">{{ stockBasic.market }}</el-tag>
       </h1>
-      <el-button :icon="ElIconArrowLeft" @click="goBack" text>返回</el-button>
     </div>
 
     <el-skeleton :loading="loading" animated :rows="6">
@@ -22,8 +22,12 @@
                 <span class="info-value">{{ stockBasic.industry || "--" }}</span>
               </div>
               <div class="info-row">
-                <span class="info-label">地区 / 交易所</span>
-                <span class="info-value">{{ stockBasic.area || "--" }} / {{ stockBasic.market || "--" }}</span>
+                <span class="info-label">地区</span>
+                <span class="info-value">{{ stockBasic.area || "--" }}</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">交易所</span>
+                <span class="info-value">{{ stockBasic.market || "--" }}</span>
               </div>
               <div class="info-row">
                 <span class="info-label">上市日期</span>
@@ -72,7 +76,11 @@
                 <span class="info-value">{{ stockDaily.turnover_rate ?? "--" }}%</span>
               </div>
             </div>
-            <el-divider style="margin: 10px 0" v-if="stockPrediction" />
+          </el-card>
+          <el-card shadow="hover" class="section info-card">
+            <template #header>
+              <span class="card-title">预测信息</span>
+            </template>
             <div class="info-grid" v-if="stockPrediction">
               <div class="info-row">
                 <span class="info-label">预测日期</span>
@@ -108,6 +116,8 @@
                   <el-radio-button :value="60">近3月</el-radio-button>
                   <el-radio-button :value="120">近6月</el-radio-button>
                   <el-radio-button :value="250">近1年</el-radio-button>
+                  <el-radio-button :value="750">近3年</el-radio-button>
+                  <el-radio-button :value="3000">全部</el-radio-button>
                 </el-radio-group>
               </div>
             </template>
@@ -255,6 +265,7 @@ const chartOption = computed(() => {
       {
         type: "value",
         gridIndex: 1,
+        position: "right",
         splitNumber: 3,
         axisLabel: { show: true, fontSize: 10, formatter: (v: number) => (v >= 10000 ? `${(v / 10000).toFixed(0)}万` : v) },
         splitLine: { show: false },
