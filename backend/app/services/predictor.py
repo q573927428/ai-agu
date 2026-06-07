@@ -21,12 +21,12 @@ class Predictor:
         self.ensemble = EnsembleModel()
 
     def _load_active_models(self, max_models: int = 5):
-        """加载多个历史活跃模型用于集成预测"""
-        # 优先加载最近训练的 is_active=1 的模型
-        # 同时加载多个历史模型，最多 max_models 个
+        """加载最近训练的多个模型用于集成预测"""
+        # 加载最近训练的 max_models 个模型（不论is_active状态）
+        # 这样集成中就有多个模型，才能基于一致性计算有区分度的置信度
         records = (
             self.db.query(ModelRecord)
-            .filter(ModelRecord.is_active == 1, ModelRecord.model_path.isnot(None))
+            .filter(ModelRecord.model_path.isnot(None))
             .order_by(ModelRecord.id.desc())
             .limit(max_models)
             .all()
@@ -90,11 +90,12 @@ class Predictor:
         # 返回: mean_preds(百分数), confidences(0-1)
         mean_preds, confidences = self.ensemble.predict(X)
 
-        # 模型版本号（取主要模型）
+        # 模型版本号（取版本短标识：每个模型版本取最后7字符拼合）
         model_versions = self.ensemble.model_versions
-        model_version = "+".join(model_versions[:3]) if model_versions else "ensemble"
-        if len(model_versions) > 3:
-            model_version += f"+{len(model_versions) - 3}more"
+        short_versions = [v[-7:] for v in model_versions]
+        model_version = "+".join(short_versions[:3]) if short_versions else "ensemble"
+        if len(short_versions) > 3:
+            model_version += f"+{len(short_versions) - 3}more"
 
         # 保存预测结果
         predict_date = date.today()

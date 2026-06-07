@@ -17,6 +17,6 @@ class Prediction(Base):
     target_date = Column(Date, nullable=False, comment="目标日期(T+20)")
     predicted_return = Column(DECIMAL(12, 6), comment="预测20日收益率")
     confidence = Column(DECIMAL(6, 4), comment="预测置信度")
-    model_version = Column(String(50), comment="模型版本号")
-    rank_score = Column(DECIMAL(12, 6), comment="排名分数")
+    model_version = Column(String(200), comment="模型版本号")
+    rank_score = Column(DECIMAL(12, 6), comment="排名分数(按预测收益率)")
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
