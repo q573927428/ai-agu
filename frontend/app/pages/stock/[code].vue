@@ -8,60 +8,93 @@
       <el-button :icon="ElIconArrowLeft" @click="goBack" text>返回</el-button>
     </div>
 
-    <el-skeleton :loading="loading" animated :rows="10">
+    <el-skeleton :loading="loading" animated :rows="6">
       <div class="detail-layout">
-        <!-- 左侧：信息卡片 -->
+        <!-- 左侧：信息卡片（合并为一张紧凑卡片） -->
         <div class="left-panel">
-          <!-- 基础信息 -->
-          <el-card shadow="hover" class="section">
+          <el-card shadow="hover" class="section info-card">
             <template #header>
-              <span class="card-title">基础信息</span>
+              <span class="card-title">股票信息</span>
             </template>
-            <el-descriptions :column="1" border v-if="stockBasic">
-              <el-descriptions-item label="行业">{{ stockBasic.industry || "--" }}</el-descriptions-item>
-              <el-descriptions-item label="地区">{{ stockBasic.area || "--" }}</el-descriptions-item>
-              <el-descriptions-item label="上市日期">{{ stockBasic.list_date || "--" }}</el-descriptions-item>
-              <el-descriptions-item label="交易所">{{ stockBasic.market || "--" }}</el-descriptions-item>
-            </el-descriptions>
-          </el-card>
-
-          <!-- 最新行情 -->
-          <el-card shadow="hover" class="section" v-if="stockDaily">
-            <template #header>
-              <span class="card-title">最新行情</span>
-            </template>
-            <el-descriptions :column="1" border>
-              <el-descriptions-item label="收盘价">{{ stockDaily.close ?? "--" }}</el-descriptions-item>
-              <el-descriptions-item label="开盘价">{{ stockDaily.open ?? "--" }}</el-descriptions-item>
-              <el-descriptions-item label="最高价">{{ stockDaily.high ?? "--" }}</el-descriptions-item>
-              <el-descriptions-item label="最低价">{{ stockDaily.low ?? "--" }}</el-descriptions-item>
-              <el-descriptions-item label="涨跌幅">
-                <span :style="{ color: getChangeColor(stockDaily.pct_chg) }">
-                  {{ formatChange(stockDaily.pct_chg) }}
+            <div class="info-grid" v-if="stockBasic">
+              <div class="info-row">
+                <span class="info-label">行业</span>
+                <span class="info-value">{{ stockBasic.industry || "--" }}</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">地区 / 交易所</span>
+                <span class="info-value">{{ stockBasic.area || "--" }} / {{ stockBasic.market || "--" }}</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">上市日期</span>
+                <span class="info-value">{{ stockBasic.list_date || "--" }}</span>
+              </div>
+            </div>
+            <el-divider style="margin: 10px 0" />
+            <div class="info-grid" v-if="stockDaily">
+              <div class="info-row">
+                <span class="info-label">开</span>
+                <span class="info-value">{{ stockDaily.open ?? "--" }}</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">高</span>
+                <span class="info-value">{{ stockDaily.high ?? "--" }}</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">低</span>
+                <span class="info-value">{{ stockDaily.low ?? "--" }}</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">收</span>
+                <span class="info-value">
+                  {{ stockDaily.close ?? "--" }}
                 </span>
-              </el-descriptions-item>
-              <el-descriptions-item label="市盈率TTM">{{ stockDaily.pe_ttm ?? "--" }}</el-descriptions-item>
-              <el-descriptions-item label="市净率">{{ stockDaily.pb ?? "--" }}</el-descriptions-item>
-              <el-descriptions-item label="换手率">{{ stockDaily.turnover_rate ?? "--" }}%</el-descriptions-item>
-            </el-descriptions>
-          </el-card>
+              </div>
+              <div class="info-row">
+                <span class="info-label">涨跌幅</span>
+                <span class="info-value">
+                  <span :style="{ color: getChangeColor(stockDaily.pct_chg), marginLeft: '6px' }">
+                    {{ formatChange(stockDaily.pct_chg) }}
+                  </span>
+                </span>
+              </div>
 
-          <!-- 最新预测 -->
-          <el-card shadow="hover" class="section" v-if="stockPrediction">
-            <template #header>
-              <span class="card-title">最新预测</span>
-            </template>
-            <el-descriptions :column="1" border>
-              <el-descriptions-item label="预测日期">{{ stockPrediction.predict_date }}</el-descriptions-item>
-              <el-descriptions-item label="预测涨跌幅（次日）">
-                <span :style="{ color: getReturnColor(stockPrediction.predicted_return_1d) }">
+              <div class="info-row">
+                <span class="info-label">市盈率</span>
+                <span class="info-value">{{ stockDaily.pe_ttm ?? "--" }}</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">市净率</span>
+                <span class="info-value">{{ stockDaily.pb ?? "--" }}</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">换手率</span>
+                <span class="info-value">{{ stockDaily.turnover_rate ?? "--" }}%</span>
+              </div>
+            </div>
+            <el-divider style="margin: 10px 0" v-if="stockPrediction" />
+            <div class="info-grid" v-if="stockPrediction">
+              <div class="info-row">
+                <span class="info-label">预测日期</span>
+                <span class="info-value">{{ stockPrediction.predict_date }}</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">预测涨跌幅（20日）</span>
+                <span class="info-value" :style="{ color: getReturnColor(stockPrediction.predicted_return) }">
+                  {{ formatPercent(stockPrediction.predicted_return) }}
+                </span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">预测涨跌幅（次日）</span>
+                <span class="info-value" :style="{ color: getReturnColor(stockPrediction.predicted_return_1d) }">
                   {{ formatPercent(stockPrediction.predicted_return_1d) }}
                 </span>
-              </el-descriptions-item>
-              <el-descriptions-item label="置信度">
-                {{ formatConfidence(stockPrediction.confidence) }}
-              </el-descriptions-item>
-            </el-descriptions>
+              </div>
+              <div class="info-row">
+                <span class="info-label">置信度</span>
+                <span class="info-value">{{ formatConfidence(stockPrediction.confidence) }}</span>
+              </div>
+            </div>
           </el-card>
         </div>
 
@@ -350,7 +383,6 @@ function goBack() {
 
 <style scoped>
 
-
 .page-header {
   display: flex;
   align-items: center;
@@ -377,7 +409,7 @@ function goBack() {
 }
 
 .left-panel {
-  width: 360px;
+  width: 340px;
   flex-shrink: 0;
 }
 
@@ -411,6 +443,34 @@ function goBack() {
 .chart-container > * {
   width: 100%;
   height: 100%;
+}
+
+/* 信息卡片紧凑样式 */
+.info-card {
+  font-size: 13px;
+}
+
+.info-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.info-label {
+  color: #909399;
+  white-space: nowrap;
+}
+
+.info-value {
+  color: #303133;
+  text-align: right;
+  font-weight: 500;
 }
 
 @media (max-width: 900px) {
