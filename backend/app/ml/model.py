@@ -64,9 +64,18 @@ class LightGBMModel:
 
         # 计算训练指标
         result = {"status": "trained", "num_boost_round": self.model.best_iteration}
+
+        from scipy.stats import pearsonr, spearmanr
+
+        # 计算训练集IC
+        y_train_pred = self.model.predict(X_train)
+        train_ic, _ = pearsonr(y_train_pred, y_train)
+        train_rank_ic, _ = spearmanr(y_train_pred, y_train)
+        result["train_ic"] = float(train_ic)
+        result["train_rank_ic"] = float(train_rank_ic)
+
         if X_valid is not None and y_valid is not None:
             y_pred = self.model.predict(X_valid)
-            from scipy.stats import pearsonr, spearmanr
             ic, _ = pearsonr(y_pred, y_valid)
             rank_ic, _ = spearmanr(y_pred, y_valid)
             result["valid_ic"] = float(ic)
