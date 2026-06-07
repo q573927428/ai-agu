@@ -41,7 +41,7 @@
             type="info"
             effect="plain"
           >
-            {{ f.name }}
+            {{ getFactorDisplayName(f.name) }}
           </el-tag>
         </div>
       </template>
@@ -50,8 +50,10 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import type { RankingItem } from "~/types/api";
 import { formatPercent, formatMoney } from "~/utils/format";
+import { getFactorDisplayName } from "~/utils/constants";
 
 const props = defineProps<{
   data: RankingItem[];
@@ -63,7 +65,7 @@ const emit = defineEmits<{
 }>();
 
 const tableData = computed(() => {
-  return props.data.map((item, index) => ({
+  return props.data.map((item: RankingItem, index: number) => ({
     ...item,
     rank: item.rank || index + 1,
   }));

@@ -92,22 +92,26 @@ class Predictor:
 
         results = []
         for i, (stock_code, pred) in enumerate(zip(stock_codes, predictions)):
-            # 归一化置信度 (0-1)
-            confidence = min(max(float(np.abs(pred)) / 30, 0), 1)
+            # 置信度基于模型原始输出(百分数)计算，典型范围0~30，归一化到0-1
+            raw_pred = float(pred)
+            confidence = min(max(float(np.abs(raw_pred)) / 30, 0), 1)
+
+            # 模型预测值为百分数（如5.2表示5.2%），存储为小数（0.052）
+            pred_decimal = raw_pred / 100.0
 
             prediction = Prediction(
                 stock_code=stock_code,
                 predict_date=predict_date,
                 target_date=target_date,
-                predicted_return=float(pred),
+                predicted_return=round(pred_decimal, 6),
                 confidence=round(confidence, 4),
                 model_version=model_version,
-                rank_score=float(pred),
+                rank_score=pred_decimal,
             )
             self.db.add(prediction)
             results.append({
                 "stock_code": stock_code,
-                "predicted_return": float(pred),
+                "predicted_return": pred_decimal,
                 "confidence": confidence,
             })
 

@@ -134,11 +134,43 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
         if not predictions.empty:
             top50 = predictor.get_top_n(trade_date, 50)
             from app.models.stock import StockBasic
+            from app.models.factor import FactorStore
             for item in top50:
                 stock = db.query(StockBasic).filter(StockBasic.stock_code == item["stock_code"]).first()
                 if stock:
                     item["stock_name"] = stock.stock_name
                     item["industry"] = stock.industry
+
+                # 补充总市值（从因子表的 stock_size_factor 反推：该因子为 ln(总市值)）
+                item["market_cap"] = 0
+                factor_record = (
+                    db.query(FactorStore)
+                    .filter(
+                        FactorStore.stock_code == item["stock_code"],
+                        FactorStore.trade_date == trade_date,
+                    )
+                    .first()
+                )
+                if factor_record and factor_record.stock_size_factor is not None:
+                    # stock_size_factor = ln(total_mv), 反推 total_mv = exp(ln_total_mv)
+                    import math
+                    item["market_cap"] = round(math.exp(float(factor_record.stock_size_factor)), 2)
+
+                # 补充主力因子（从因子表取绝对值最大的3个个股因子）
+                if factor_record:
+                    factor_cols = [
+                        col.name for col in FactorStore.__table__.columns
+                        if col.name not in ("id", "stock_code", "trade_date", "created_at")
+                    ]
+                    factor_values = []
+                    for col in factor_cols:
+                        val = getattr(factor_record, col)
+                        if val is not None:
+                            factor_values.append({"name": col, "contribution": float(val)})
+                    factor_values.sort(key=lambda x: abs(x["contribution"]), reverse=True)
+                    item["top_factors"] = factor_values[:3]
+                else:
+                    item["top_factors"] = []
 
             ranking_service = RankingService(db)
             ranking_service.save_ranking_snapshot(date.today(), top50)

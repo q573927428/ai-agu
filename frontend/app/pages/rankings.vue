@@ -22,7 +22,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
-import { Refresh } from "@element-plus/icons-vue";
 import { useApi } from "~/composables/useApi";
 import type { RankingItem } from "~/types/api";
 

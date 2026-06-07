@@ -1,4 +1,5 @@
 """应用配置管理"""
+import os
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -17,7 +18,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Model
-    model_dir: str = "./models"
+    model_dir: str = ""  # 在 __init__ 中设为绝对路径
     model_version: str = "v1.0"
 
     # AkShare
@@ -33,3 +34,8 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# 确保 model_dir 为绝对路径（相对于此配置文件所在目录）
+_config_dir = os.path.dirname(os.path.abspath(__file__))
+if not settings.model_dir or not os.path.isabs(settings.model_dir):
+    settings.model_dir = os.path.join(os.path.dirname(_config_dir), "models")

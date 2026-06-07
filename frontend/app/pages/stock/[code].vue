@@ -48,7 +48,7 @@
             </span>
           </el-descriptions-item>
           <el-descriptions-item label="置信度">
-            {{ (stockPrediction.confidence * 100).toFixed(1) }}%
+            {{ stockPrediction.confidence != null ? (stockPrediction.confidence * 100).toFixed(1) + "%" : "--" }}
           </el-descriptions-item>
         </el-descriptions>
       </el-card>
@@ -59,7 +59,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ArrowLeft } from "@element-plus/icons-vue";
 import { useApi } from "~/composables/useApi";
 import { formatPercent } from "~/utils/format";
 import type { StockBasic, StockDaily, StockPrediction } from "~/types/api";
