@@ -26,6 +26,10 @@
         <el-icon><ElIconTrendCharts /></el-icon>
         <template #title>TOP50排名</template>
       </el-menu-item>
+      <el-menu-item index="/models">
+        <el-icon><ElIconDataAnalysis /></el-icon>
+        <template #title>模型状态</template>
+      </el-menu-item>
     </el-menu>
   </div>
 </template>

@@ -1,6 +1,6 @@
 <template>
-  <el-table :data="tableData" stripe style="width: 100%" v-loading="loading" @row-click="handleRowClick">
-    <el-table-column prop="rank" label="排名" width="80" align="center">
+  <el-table :data="sortedData" stripe style="width: 100%" v-loading="loading" @row-click="handleRowClick" @sort-change="handleSortChange">
+    <el-table-column prop="rank" label="排名" width="80" align="center" sortable="custom">
       <template #default="{ row }">
         <el-tag v-if="row.rank <= 3" :type="rankTagType(row.rank)" effect="dark" size="small">
           {{ row.rank }}
@@ -9,19 +9,19 @@
       </template>
     </el-table-column>
     <el-table-column prop="stock_code" label="股票代码" width="120" />
-    <el-table-column prop="stock_name" label="股票名称" min-width="150">
+    <el-table-column prop="stock_name" label="股票名称" width="150">
       <template #default="{ row }">
         <el-link type="primary" :underline="false">{{ row.stock_name }}</el-link>
       </template>
     </el-table-column>
-    <el-table-column prop="predicted_return" label="预测20日涨跌幅" width="140" align="right">
+    <el-table-column prop="predicted_return" label="预测20日涨跌幅" width="160" align="right" sortable="custom">
       <template #default="{ row }">
         <span :style="{ color: getReturnColor(row.predicted_return) }">
           {{ formatPercent(row.predicted_return) }}
         </span>
       </template>
     </el-table-column>
-    <el-table-column prop="predicted_return_1d" label="预测次日涨跌幅" width="140" align="right">
+    <el-table-column prop="predicted_return_1d" label="预测次日涨跌幅" width="160" align="right" sortable="custom">
       <template #default="{ row }">
         <span v-if="row.predicted_return_1d != null" :style="{ color: getReturnColor(row.predicted_return_1d) }">
           {{ formatPercent(row.predicted_return_1d) }}
@@ -29,7 +29,7 @@
         <span v-else>--</span>
       </template>
     </el-table-column>
-    <el-table-column prop="confidence" label="置信度" width="120" align="right">
+    <el-table-column prop="confidence" label="置信度" width="130" align="right" sortable="custom">
       <template #default="{ row }">
         <span v-if="row.confidence != null">{{ formatPercent(row.confidence) }}</span>
         <span v-else>--</span>
@@ -40,7 +40,7 @@
         <el-tag v-if="row.industry" size="small">{{ row.industry }}</el-tag>
       </template>
     </el-table-column>
-    <el-table-column prop="market_cap" label="总市值" width="140" align="right">
+    <el-table-column prop="market_cap" label="总市值" width="150" align="right" sortable="custom">
       <template #default="{ row }">
         {{ formatMoney(row.market_cap) }}
       </template>
@@ -64,7 +64,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import type { RankingItem } from "~/types/api";
 import { formatPercent, formatMoney } from "~/utils/format";
 import { getFactorDisplayName } from "~/utils/constants";
@@ -78,12 +78,35 @@ const emit = defineEmits<{
   (e: "row-click", code: string): void;
 }>();
 
+const sortBy = ref<string>("");
+const sortOrder = ref<"ascending" | "descending">("ascending");
+
 const tableData = computed(() => {
   return props.data.map((item: RankingItem, index: number) => ({
     ...item,
     rank: item.rank || index + 1,
   }));
 });
+
+const sortedData = computed(() => {
+  if (!sortBy.value) return tableData.value;
+  const data = [...tableData.value];
+  data.sort((a: any, b: any) => {
+    const aVal = a[sortBy.value] ?? 0;
+    const bVal = b[sortBy.value] ?? 0;
+    if (sortOrder.value === "ascending") {
+      return aVal - bVal;
+    } else {
+      return bVal - aVal;
+    }
+  });
+  return data;
+});
+
+function handleSortChange({ prop, order }: { prop: string | null; order: "ascending" | "descending" | null }) {
+  sortBy.value = order && prop ? prop : "";
+  sortOrder.value = order || "ascending";
+}
 
 function handleRowClick(row: any) {
   emit("row-click", row.stock_code);
