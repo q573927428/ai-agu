@@ -93,25 +93,14 @@
           <template #header>
             <div class="card-header">
               <span>模型状态</span>
-              <el-tag type="info" size="small" v-if="modelStatus.models">
-                共 {{ modelStatus.models.length }} 个模型
+              <el-tag type="success" size="small" v-if="activeModels.length">
+                共 {{ activeModels.length }} 个活跃模型
               </el-tag>
             </div>
           </template>
-          <el-descriptions :column="4" border>
-            <el-descriptions-item label="模型版本">{{ modelStatus.model_version || "--" }}</el-descriptions-item>
-            <el-descriptions-item label="最近训练">{{ modelStatus.last_train_date || "--" }}</el-descriptions-item>
-            <el-descriptions-item label="最新 IC">{{ modelStatus.latest_ic != null ? modelStatus.latest_ic.toFixed(4) : "--" }}</el-descriptions-item>
-            <el-descriptions-item label="模型状态">
-              <el-tag :type="modelStatus.is_active ? 'success' : 'info'" size="small">
-                {{ modelStatus.is_active ? "活跃" : "未训练" }}
-              </el-tag>
-            </el-descriptions-item>
-          </el-descriptions>
-
-          <!-- 所有模型记录列表 -->
-          <div v-if="modelStatus.models && modelStatus.models.length > 0" style="margin-top: 16px">
-            <el-table :data="modelStatus.models" stripe size="small" border style="width: 100%">
+          <!-- 活跃模型记录列表 -->
+          <div v-if="activeModels.length > 0">
+            <el-table :data="activeModels" stripe size="small" border style="width: 100%">
               <el-table-column type="index" label="#" width="50" />
               <el-table-column prop="model_version" label="模型版本" min-width="180" />
               <el-table-column prop="train_date" label="训练日期" width="120" />
@@ -171,6 +160,10 @@ const marketOverview = ref<MarketOverview>({
 });
 
 const modelStatus = computed(() => marketOverview.value.model_status);
+
+const activeModels = computed(() => {
+  return (modelStatus.value.models ?? []).filter((m) => m.is_active);
+});
 
 const marketDate = computed(() => {
   return dayjs().locale("zh-cn").format("YYYY年M月D日");

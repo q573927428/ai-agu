@@ -399,8 +399,11 @@ class Trainer:
             feature_importance = model.get_feature_importance(list(X_train.columns))
             top_features = feature_importance.head(20).to_dict("records")
 
-            # 将旧模型设为非活跃
-            self.db.query(ModelRecord).filter(ModelRecord.is_active == 1).update({"is_active": 0})
+            # 将旧20日模型设为非活跃（不影响1日模型）
+            self.db.query(ModelRecord).filter(
+                ModelRecord.is_active == 1,
+                ~ModelRecord.model_version.like("1d_model%"),
+            ).update({"is_active": 0})
 
             model_record = ModelRecord(
                 model_version=model_version,
@@ -451,8 +454,11 @@ class Trainer:
         if not model_results:
             return {"status": "failed", "message": "所有模型训练失败"}
 
-        # 将旧模型设为非活跃
-        self.db.query(ModelRecord).filter(ModelRecord.is_active == 1).update({"is_active": 0})
+        # 将旧20日模型设为非活跃（不影响1日模型）
+        self.db.query(ModelRecord).filter(
+            ModelRecord.is_active == 1,
+            ~ModelRecord.model_version.like("1d_model%"),
+        ).update({"is_active": 0})
 
         # 保存所有模型到数据库
         saved_records = []
@@ -683,8 +689,11 @@ class Trainer:
         if not model_results:
             return {"status": "failed", "message": "1d: 所有模型训练失败"}
 
-        # 将旧1d模型设为非活跃
-        self.db.query(ModelRecord).filter(ModelRecord.is_active == 1).update({"is_active": 0})
+        # 将旧1日模型设为非活跃（不影响20日模型）
+        self.db.query(ModelRecord).filter(
+            ModelRecord.is_active == 1,
+            ModelRecord.model_version.like("1d_model%"),
+        ).update({"is_active": 0})
 
         saved_records = []
         for m_res in model_results:
