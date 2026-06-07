@@ -7,6 +7,8 @@
   python scripts/fetch_real_data.py 2026-06-01 2026-06-05     # 拉取日期区间数据
   python scripts/fetch_real_data.py 2026-06-05 --top 100      # 仅拉取前100只（测试用）
   python scripts/fetch_real_data.py --history 30              # 拉取最近30个交易日的历史数据
+  python scripts/fetch_real_data.py --full-financial          # 全量刷新财务数据（默认增量更新）
+  python scripts/fetch_real_data.py --skip-financial          # 跳过财务数据拉取
 """
 import sys
 import os
@@ -104,6 +106,7 @@ def parse_args():
                         help="拉取最近N个交易日的历史数据（覆盖日期参数）")
     parser.add_argument("--skip-macro", action="store_true", help="跳过宏观数据")
     parser.add_argument("--skip-financial", action="store_true", help="跳过财务数据")
+    parser.add_argument("--full-financial", action="store_true", help="全量刷新财务数据（默认增量）")
     parser.add_argument("--skip-stock-basic", action="store_true", help="跳过股票基础信息拉取")
     parser.add_argument("--skip-index", action="store_true", help="跳过指数行情拉取")
     parser.add_argument("--delay", type=float, default=0.35,
@@ -678,14 +681,20 @@ def _safe_date_str(val) -> str | None:
         return None
 
 
-def fetch_financial_data(db: Session, delay: float = 0.35, top_n: int = 0) -> bool:
+def fetch_financial_data(db: Session, delay: float = 0.35, top_n: int = 0, full_refresh: bool = False) -> bool:
     """
-    ④ 拉取上市公司财务数据（Tushare Pro）
+    ④ 拉取上市公司财务数据（Tushare Pro）- 支持增量更新
     - pro.income()        → income 表 (利润表)
     - pro.balancesheet()  → balancesheet 表 (资产负债表)
     - pro.cashflow()      → cashflow 表 (现金流量表)
     - pro.fina_indicator() → fina_indicator 表 (财务指标)
+
+    增量更新策略：
+      检测每张表的最大 end_date，仅拉取该日期之后的数据（使用 start_date 参数）
+      首次运行或 full_refresh=True 时拉取全部历史数据
     """
+    from sqlalchemy import func
+
     # 获取所有股票列表
     stocks = db.query(StockBasic.stock_code, StockBasic.ts_code).all()
     if top_n > 0:
@@ -702,26 +711,49 @@ def fetch_financial_data(db: Session, delay: float = 0.35, top_n: int = 0) -> bo
 
     for api_name, api_func, model_cls, table_name, unique_keys in api_configs:
         logger.info(f"  ── 拉取 {api_name} ({table_name}) ──")
+
+        # === 🌟 增量更新：检测数据库中已有数据的最大 end_date ===
+        if not full_refresh:
+            latest_record = db.query(func.max(model_cls.end_date)).scalar()
+            if latest_record is not None:
+                start_date = latest_record.strftime("%Y%m%d")
+                logger.info(f"    📅 增量模式：数据库已有 {table_name} 数据至 {latest_record}，仅拉取其后数据")
+            else:
+                start_date = None
+                logger.info(f"    📅 全量模式（首次）：{table_name} 表为空，拉取全部历史数据")
+        else:
+            start_date = None
+            logger.info(f"    📅 全量刷新模式（--full-financial）：重新拉取 {table_name} 全部历史数据")
+
         all_records = []
         success_count = 0
         skip_count = 0
         error_count = 0
 
+        # 增量模式下可跳过的股票数统计
+        incr_skip_total = 0
+
         for idx, (stock_code, ts_code) in enumerate(stocks):
             if idx % 100 == 0 and idx > 0:
-                logger.info(f"    [{idx}/{total}] {api_name} 处理中... ({success_count} 成功)")
+                logger.info(f"    [{idx}/{total}] {api_name} 处理中... ({success_count} 成功, {skip_count} 跳过)")
 
             _rate_limit(delay)
             try:
-                # 拉取全部历史财务数据
-                df = api_func(ts_code=ts_code)
+                # 🌟 增量拉取：仅拉取 start_date 之后的数据（Tushare 支持 start_date/end_date 过滤）
+                kwargs = {"ts_code": ts_code}
+                if start_date is not None:
+                    kwargs["start_date"] = start_date
+                df = api_func(**kwargs)
             except Exception as e:
                 err_msg = str(e)
                 if "频率超限" in err_msg or "超限" in err_msg or "rate limit" in err_msg.lower():
                     logger.warning(f"    ⚠️ [频率超限] 等待61s...")
                     time.sleep(61)
                     try:
-                        df = api_func(ts_code=ts_code)
+                        kwargs = {"ts_code": ts_code}
+                        if start_date is not None:
+                            kwargs["start_date"] = start_date
+                        df = api_func(**kwargs)
                     except Exception as e2:
                         logger.warning(f"    ❌ {stock_code} {api_name} 重试仍失败: {e2}")
                         error_count += 1
@@ -931,7 +963,7 @@ def main():
             logger.info("  利润表 → income | 资产负债表 → balancesheet")
             logger.info("  现金流量表 → cashflow | 财务指标 → fina_indicator")
             logger.info(f"{'='*50}")
-            fetch_financial_data(db, delay=args.delay, top_n=args.top)
+            fetch_financial_data(db, delay=args.delay, top_n=args.top, full_refresh=args.full_financial)
 
         # ========== 统计 ==========
         logger.info(f"\n{'='*50}")
