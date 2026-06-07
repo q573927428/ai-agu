@@ -11,6 +11,7 @@ export interface RankingItem {
   stock_code: string;
   stock_name: string;
   predicted_return: number;
+  confidence: number | null;
   industry: string | null;
   market_cap: number | null;
   top_factors: Array<{ name: string; contribution: number }> | null;

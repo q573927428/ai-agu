@@ -1,6 +1,5 @@
 <template>
   <div class="dashboard">
-    <h1 class="page-title">首页仪表盘</h1>
 
     <!-- 市场概览 -->
     <el-row :gutter="20" class="section">

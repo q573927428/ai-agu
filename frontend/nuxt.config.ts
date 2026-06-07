@@ -47,7 +47,6 @@ export default defineNuxtConfig({
         "@element-plus/icons-vue",
         "dayjs",
         "dayjs/plugin/*.js",
-        "lodash-unified",
       ],
     },
   },

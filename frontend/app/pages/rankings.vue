@@ -1,7 +1,6 @@
 <template>
   <div class="rankings-page">
     <div class="page-header">
-      <h1 class="page-title">TOP50 股票排名</h1>
       <div class="page-actions">
         <el-date-picker
           v-model="selectedDate"

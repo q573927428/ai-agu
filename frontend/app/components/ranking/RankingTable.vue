@@ -21,6 +21,12 @@
         </span>
       </template>
     </el-table-column>
+    <el-table-column prop="confidence" label="置信度" width="120" align="right">
+      <template #default="{ row }">
+        <span v-if="row.confidence != null">{{ formatPercent(row.confidence) }}</span>
+        <span v-else>--</span>
+      </template>
+    </el-table-column>
     <el-table-column prop="industry" label="行业" width="120">
       <template #default="{ row }">
         <el-tag v-if="row.industry" size="small">{{ row.industry }}</el-tag>
@@ -75,7 +81,7 @@ function handleRowClick(row: any) {
   emit("row-click", row.stock_code);
 }
 
-function rankTagType(rank: number): string {
+function rankTagType(rank: number): "danger" | "warning" | "success" {
   if (rank === 1) return "danger";
   if (rank === 2) return "warning";
   return "success";
