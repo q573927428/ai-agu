@@ -18,30 +18,30 @@ class FinaIndicator(Base):
     end_date = Column(Date, nullable=False, comment="报告期")
 
     # ── 盈利能力 ──
-    roe = Column(DECIMAL(10, 4), comment="净资产收益率(%)")
-    roa = Column(DECIMAL(10, 4), comment="总资产收益率(%)")
+    roe = Column(DECIMAL(16, 4), comment="净资产收益率(%)")
+    roa = Column(DECIMAL(16, 4), comment="总资产收益率(%)")
     gross_margin = Column(DECIMAL(16, 4), comment="销售毛利率(%)")
-    net_margin = Column(DECIMAL(10, 4), comment="销售净利率(%)")
-    eps = Column(DECIMAL(10, 4), comment="每股收益")
+    net_margin = Column(DECIMAL(16, 4), comment="销售净利率(%)")
+    eps = Column(DECIMAL(16, 4), comment="每股收益")
 
     # ── 成长能力 (同比) ──
-    revenue_yoy = Column(DECIMAL(10, 4), comment="营收同比增长率(%)")
-    net_profit_yoy = Column(DECIMAL(10, 4), comment="净利润同比增长率(%)")
-    oper_cf_yoy = Column(DECIMAL(10, 4), comment="经营活动现金流同比增长率(%)")
-    roe_yoy = Column(DECIMAL(10, 4), comment="ROE同比增长率(%)")
+    revenue_yoy = Column(DECIMAL(16, 4), comment="营收同比增长率(%)")
+    net_profit_yoy = Column(DECIMAL(16, 4), comment="净利润同比增长率(%)")
+    oper_cf_yoy = Column(DECIMAL(16, 4), comment="经营活动现金流同比增长率(%)")
+    roe_yoy = Column(DECIMAL(16, 4), comment="ROE同比增长率(%)")
 
     # ── 运营能力 ──
-    asset_turnover = Column(DECIMAL(10, 4), comment="总资产周转率")
-    receiv_turn = Column(DECIMAL(10, 4), comment="应收账款周转率")
+    asset_turnover = Column(DECIMAL(16, 4), comment="总资产周转率")
+    receiv_turn = Column(DECIMAL(16, 4), comment="应收账款周转率")
 
     # ── 偿债能力 ──
-    debt_ratio = Column(DECIMAL(10, 4), comment="资产负债率(%)")
-    current_ratio = Column(DECIMAL(10, 4), comment="流动比率")
-    quick_ratio = Column(DECIMAL(10, 4), comment="速动比率")
+    debt_ratio = Column(DECIMAL(16, 4), comment="资产负债率(%)")
+    current_ratio = Column(DECIMAL(16, 4), comment="流动比率")
+    quick_ratio = Column(DECIMAL(16, 4), comment="速动比率")
 
     # ── 每股指标 ──
-    bps = Column(DECIMAL(10, 4), comment="每股净资产")
-    cashflow_ps = Column(DECIMAL(10, 4), comment="每股经营活动现金流")
+    bps = Column(DECIMAL(16, 4), comment="每股净资产")
+    cashflow_ps = Column(DECIMAL(16, 4), comment="每股经营活动现金流")
 
     # ── 系统字段 ──
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")
