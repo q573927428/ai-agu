@@ -32,9 +32,7 @@ try:
 
     # 3. 检查因子（仅最近3年）
     fdates = [r[0] for r in db.query(FactorStore.trade_date).filter(FactorStore.trade_date >= recent_dates[0]).distinct().order_by(FactorStore.trade_date).all()]
-    logger.info(f"因子日期数: {len(fdates)}")
-    for d in fdates:
-        logger.info(f"  {d}")
+    logger.info(f"因子日期数: {len(fdates)}, 范围: {fdates[0]} ~ {fdates[-1]}")
     if len(fdates) < 3:
         logger.error("因子数据不足")
         exit(1)
