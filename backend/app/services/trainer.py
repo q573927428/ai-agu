@@ -112,72 +112,81 @@ class Trainer:
         self.db = db
 
     def prepare_training_data(self, start_date: str, end_date: str) -> tuple:
-        """准备训练数据"""
-        # 获取因子数据
-        factors = (
-            self.db.query(FactorStore)
+        """准备训练数据（分批加载 + 预计算标签，避免内存溢出和慢查询）"""
+        # 先获取范围内的所有交易日
+        date_rows = (
+            self.db.query(FactorStore.trade_date)
             .filter(FactorStore.trade_date.between(start_date, end_date))
+            .distinct()
+            .order_by(FactorStore.trade_date)
             .all()
         )
-
-        if not factors:
+        all_dates = [r[0] for r in date_rows]
+        if not all_dates:
             logger.warning(f"在 {start_date} ~ {end_date} 范围内没有因子数据")
             return None, None, None, None
 
-        # 转换为 DataFrame
-        records = []
-        for f in factors:
-            record = {
-                "stock_code": f.stock_code,
-                "trade_date": f.trade_date,
-            }
-            # 获取所有因子列（NULL填充为0，与预测时一致）
-            for col in FactorStore.__table__.columns:
-                if col.name in ("id", "stock_code", "trade_date", "created_at"):
-                    continue
-                val = getattr(f, col.name)
-                record[col.name] = float(val) if val is not None else 0.0
-            records.append(record)
+        # 特征列名（缓存，仅需获取一次）
+        factor_col_names = [
+            col.name for col in FactorStore.__table__.columns
+            if col.name not in ("id", "stock_code", "trade_date", "created_at")
+        ]
 
-        df = pd.DataFrame(records)
+        # ====== 一次性预计算所有标签 ======
+        logger.info("预计算未来20日收益率标签...")
+        label_map = self._precompute_labels(all_dates[0], end_date)
+        logger.info(f"预计算完成，共 {len(label_map)} 条有效标签")
 
-        # 获取标签 (未来20日收益率)
-        labels = []
-        for _, row in df.iterrows():
-            stock_code = row["stock_code"]
-            trade_date = row["trade_date"]
+        # 分批处理，每批 100 个交易日
+        BATCH_SIZE = 100
+        dfs = []
+        total_batches = (len(all_dates) + BATCH_SIZE - 1) // BATCH_SIZE
+        for i in range(0, len(all_dates), BATCH_SIZE):
+            batch_dates = all_dates[i:i + BATCH_SIZE]
+            batch_start = str(batch_dates[0])
+            batch_end = str(batch_dates[-1])
 
-            # 找到20个交易日后的收盘价
-            future = (
-                self.db.query(StockDaily.close)
-                .filter(
-                    StockDaily.stock_code == stock_code,
-                    StockDaily.trade_date > trade_date,
-                )
-                .order_by(StockDaily.trade_date)
-                .limit(20)
+            factors = (
+                self.db.query(FactorStore)
+                .filter(FactorStore.trade_date.between(batch_start, batch_end))
                 .all()
             )
 
-            if len(future) == 20 and future[-1][0]:
-                current_close = (
-                    self.db.query(StockDaily.close)
-                    .filter(
-                        StockDaily.stock_code == stock_code,
-                        StockDaily.trade_date == trade_date,
-                    )
-                    .scalar()
-                )
-                if current_close:
-                    future_return = (float(future[-1][0]) / float(current_close) - 1) * 100
-                    labels.append(future_return)
-                else:
-                    labels.append(None)
-            else:
-                labels.append(None)
+            # 构建当前批次的记录列表
+            records = []
+            for f in factors:
+                record = {
+                    "stock_code": f.stock_code,
+                    "trade_date": f.trade_date,
+                }
+                for col_name in factor_col_names:
+                    val = getattr(f, col_name)
+                    record[col_name] = float(val) if val is not None else 0.0
+                records.append(record)
 
-        df["future_return_20d"] = labels
-        df = df.dropna(subset=["future_return_20d"])
+            if not records:
+                continue
+
+            batch_df = pd.DataFrame(records)
+
+            # 使用预计算标签映射
+            batch_df["future_return_20d"] = batch_df.apply(
+                lambda row: label_map.get((row["stock_code"], row["trade_date"])),
+                axis=1,
+            )
+            batch_df = batch_df.dropna(subset=["future_return_20d"])
+            if not batch_df.empty:
+                dfs.append(batch_df)
+
+            logger.debug(f"处理批次 {i // BATCH_SIZE + 1}/{total_batches}: "
+                         f"{batch_start} ~ {batch_end}, "
+                         f"当前批次 {len(batch_df)} 条有效数据")
+
+        if not dfs:
+            logger.warning("所有批次处理后均无有效数据")
+            return None, None, None, None
+
+        df = pd.concat(dfs, ignore_index=True)
 
         if df.empty:
             return None, None, None, None
@@ -202,6 +211,67 @@ class Trainer:
 
         logger.info(f"训练数据: {len(X_train)} 条, 验证数据: {len(X_valid)} 条, 特征: {len(feature_cols)} 个")
         return X_train, y_train, X_valid, y_valid
+
+    def _precompute_labels(self, start_date, end_date) -> dict:
+        """分批预计算所有 (stock_code, trade_date) → future_return_20d 标签"""
+        # 获取所有股票列表
+        stock_rows = (
+            self.db.query(StockDaily.stock_code)
+            .filter(StockDaily.trade_date.between(start_date, end_date))
+            .distinct()
+            .all()
+        )
+        stock_codes = [r[0] for r in stock_rows]
+        logger.info(f"共 {len(stock_codes)} 只股票需要计算标签")
+
+        # 分批处理每只股票，避免 IN 查询过慢
+        LABEL_BATCH = 200  # 每批 200 只股票
+        label_map = {}
+
+        for i in range(0, len(stock_codes), LABEL_BATCH):
+            batch_codes = stock_codes[i:i + LABEL_BATCH]
+
+            rows = (
+                self.db.query(StockDaily.stock_code, StockDaily.trade_date, StockDaily.close)
+                .filter(
+                    StockDaily.stock_code.in_(batch_codes),
+                    StockDaily.trade_date.between(start_date, end_date),
+                )
+                .order_by(StockDaily.stock_code, StockDaily.trade_date)
+                .all()
+            )
+
+            current_stock = None
+            dates_list = []
+            close_list = []
+
+            for row in rows:
+                sc, td, close = row
+                if close is None:
+                    continue
+                close_val = float(close)
+
+                if sc != current_stock:
+                    if current_stock and len(dates_list) >= 21:
+                        for idx in range(len(dates_list) - 20):
+                            future_return = (close_list[idx + 20] / close_list[idx] - 1) * 100
+                            label_map[(current_stock, dates_list[idx])] = future_return
+                    current_stock = sc
+                    dates_list = [td]
+                    close_list = [close_val]
+                else:
+                    dates_list.append(td)
+                    close_list.append(close_val)
+
+            # 处理当前批次最后一只股票
+            if current_stock and len(dates_list) >= 21:
+                for idx in range(len(dates_list) - 20):
+                    future_return = (close_list[idx + 20] / close_list[idx] - 1) * 100
+                    label_map[(current_stock, dates_list[idx])] = future_return
+
+            logger.info(f"标签计算进度: {min(i + LABEL_BATCH, len(stock_codes))}/{len(stock_codes)} 只股票")
+
+        return label_map
 
     def _train_single_model(
         self,

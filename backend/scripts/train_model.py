@@ -15,10 +15,14 @@ try:
     dates = [r[0] for r in db.query(StockDaily.trade_date).distinct().order_by(StockDaily.trade_date).all()]
     logger.info(f"交易日: {len(dates)} 天")
 
-    # 2. 计算因子
+    # 2. 计算因子（仅计算最近3年的日期）
+    THREE_YEARS_TRADING_DAYS = 750  # 约3年（A股年均250个交易日）
+    recent_dates = dates[-min(len(dates), THREE_YEARS_TRADING_DAYS):]
+    logger.info(f"计算因子范围: {recent_dates[0]} ~ {recent_dates[-1]}, 共 {len(recent_dates)} 个交易日")
+
     existing = set(r[0] for r in db.query(FactorStore.trade_date).distinct().all())
     engine = FactorEngine(db)
-    for td in dates:
+    for td in recent_dates:
         td_str = td.strftime("%Y-%m-%d") if hasattr(td, 'strftime') else str(td)
         if td_str in {d.strftime("%Y-%m-%d") if hasattr(d, 'strftime') else str(d) for d in existing}:
             continue
@@ -26,8 +30,8 @@ try:
         if df is not None and not df.empty:
             engine.save_factors(df)
 
-    # 3. 检查因子
-    fdates = [r[0] for r in db.query(FactorStore.trade_date).distinct().order_by(FactorStore.trade_date).all()]
+    # 3. 检查因子（仅最近3年）
+    fdates = [r[0] for r in db.query(FactorStore.trade_date).filter(FactorStore.trade_date >= recent_dates[0]).distinct().order_by(FactorStore.trade_date).all()]
     logger.info(f"因子日期数: {len(fdates)}")
     for d in fdates:
         logger.info(f"  {d}")
@@ -35,7 +39,7 @@ try:
         logger.error("因子数据不足")
         exit(1)
 
-    # 4. 训练
+    # 4. 训练（最近3年数据）
     start = str(fdates[0])
     end = str(fdates[-3])
     logger.info(f"训练范围: {start} ~ {end}")
