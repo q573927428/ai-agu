@@ -1,3 +1,5 @@
+import dayjs from "dayjs";
+
 /** 数字/日期格式化工具 */
 
 /**
@@ -24,8 +26,7 @@ export function formatNumber(value: number | null | undefined, decimals: number 
  */
 export function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return "--";
-  const date = new Date(dateStr);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  return dayjs(dateStr).format("YYYY-MM-DD");
 }
 
 /**
