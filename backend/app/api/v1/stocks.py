@@ -35,11 +35,21 @@ def get_stock_detail(code: str, db: Session = Depends(get_db)) -> ApiResponse:
     if not detail["basic"]:
         return ApiResponse(code=404, data=None, message="股票不存在")
 
+    # 从因子表获取 pe_ttm/pb/turnover_rate
+    from app.models.factor import FactorStore
+    factors = (
+        db.query(FactorStore)
+        .filter(FactorStore.stock_code == code)
+        .order_by(FactorStore.trade_date.desc())
+        .first()
+    )
+
     return ApiResponse(data={
         "basic": {
             "stock_code": detail["basic"].stock_code,
             "stock_name": detail["basic"].stock_name,
             "industry": detail["basic"].industry,
+            "area": detail["basic"].area,
             "market": detail["basic"].market,
             "list_date": str(detail["basic"].list_date) if detail["basic"].list_date else None,
         },
@@ -52,6 +62,9 @@ def get_stock_detail(code: str, db: Session = Depends(get_db)) -> ApiResponse:
             "volume": int(detail["latest_daily"].volume) if detail["latest_daily"] else None,
             "amount": float(detail["latest_daily"].amount) if detail["latest_daily"] else None,
             "pct_chg": float(detail["latest_daily"].pct_chg) if detail["latest_daily"] else None,
+            "pe_ttm": float(factors.stock_pe_ttm) if factors and factors.stock_pe_ttm is not None else None,
+            "pb": float(factors.stock_pb) if factors and factors.stock_pb is not None else None,
+            "turnover_rate": float(factors.stock_turnover_rate_5d) if factors and factors.stock_turnover_rate_5d is not None else None,
         } if detail["latest_daily"] else None,
         "latest_prediction": {
             "predict_date": str(detail["latest_prediction"].predict_date) if detail["latest_prediction"] else None,
