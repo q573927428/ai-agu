@@ -1,118 +1,114 @@
 <template>
-  <div class="header-content">
-    <div class="header-left">
-      <NuxtLink to="/" class="logo">
+  <div class="sidebar-container">
+    <!-- Logo 区域 -->
+    <div class="sidebar-logo" :class="{ collapsed: isCollapse }">
+      <NuxtLink to="/" class="logo-link">
         <el-icon :size="28"><ElIconCoin /></el-icon>
-        <span class="logo-text">A股量化选股平台</span>
+        <span v-show="!isCollapse" class="logo-text">A股量化选股平台</span>
       </NuxtLink>
     </div>
-    <div class="header-center">
-      <el-menu
-        mode="horizontal"
-        :ellipsis="false"
-        router
-        :default-active="route.path"
-        background-color="transparent"
-        text-color="rgba(255,255,255,0.8)"
-        active-text-color="#fff"
-      >
-        <el-menu-item index="/">
-          <el-icon><ElIconHomeFilled /></el-icon>
-          首页
-        </el-menu-item>
-        <el-menu-item index="/rankings">
-          <el-icon><ElIconTrendCharts /></el-icon>
-          TOP50排名
-        </el-menu-item>
-      </el-menu>
-    </div>
-    <div class="header-right">
-      <div class="market-status">
-        <el-tag :type="isMarketOpen ? 'success' : 'info'" size="small" effect="dark">
-          {{ isMarketOpen ? "交易中" : "已收盘" }}
-        </el-tag>
-      </div>
-    </div>
+
+    <!-- 菜单区域 -->
+    <el-menu
+      :default-active="activeMenu"
+      :collapse="isCollapse"
+      router
+      class="sidebar-menu"
+      background-color="transparent"
+      text-color="var(--el-text-color-primary)"
+      active-text-color="var(--el-color-primary)"
+    >
+      <el-menu-item index="/">
+        <el-icon><ElIconHomeFilled /></el-icon>
+        <template #title>首页</template>
+      </el-menu-item>
+      <el-menu-item index="/rankings">
+        <el-icon><ElIconTrendCharts /></el-icon>
+        <template #title>TOP50排名</template>
+      </el-menu-item>
+    </el-menu>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { useRoute } from "vue-router";
-import { ref, computed, onMounted } from "vue";
+
+const props = defineProps<{
+  isCollapse: boolean;
+}>();
+
+const emit = defineEmits<{
+  toggle: [];
+}>();
 
 const route = useRoute();
-const currentTime = ref(new Date());
 
-// 判断是否在交易时间（9:30-15:00 周一至周五）
-const isMarketOpen = computed(() => {
-  const now = currentTime.value;
-  const day = now.getDay();
-  const hour = now.getHours();
-  const minute = now.getMinutes();
-  const time = hour * 100 + minute;
-  return day >= 1 && day <= 5 && time >= 930 && time <= 1500;
-});
-
-// 每分钟更新一次时间（仅在客户端执行）
-onMounted(() => {
-  setInterval(() => {
-    currentTime.value = new Date();
-  }, 60000);
+const activeMenu = computed(() => {
+  const r = route as any;
+  return r.path;
 });
 </script>
 
 <style scoped>
-.header-content {
+.sidebar-container {
   display: flex;
-  align-items: center;
-  height: 60px;
-  padding: 0 20px;
-  max-width: 1400px;
-  margin: 0 auto;
-  width: 100%;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
 }
 
-.header-left {
+.sidebar-logo {
+  height: 56px;
   display: flex;
   align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid var(--el-border-color-light);
+  padding: 0 12px;
+  transition: padding 0.3s;
 }
 
-.logo {
+.sidebar-logo.collapsed {
+  padding: 0;
+}
+
+.logo-link {
   display: flex;
   align-items: center;
   text-decoration: none;
-  color: white;
+  color: var(--el-text-color-primary);
   gap: 8px;
+  overflow: hidden;
 }
 
 .logo-text {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
   white-space: nowrap;
 }
 
-.header-center {
+.sidebar-menu {
   flex: 1;
-  display: flex;
-  justify-content: center;
+  border-right: none;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
-.header-center .el-menu {
-  border-bottom: none;
+.sidebar-menu:not(.el-menu--collapse) {
+  width: 220px;
 }
 
-.header-center .el-menu-item {
+.sidebar-menu.el-menu--collapse {
+  width: 64px;
+}
+
+.el-menu-item {
   font-size: 14px;
+  height: 48px;
+  line-height: 48px;
 }
 
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.market-status {
-  display: flex;
-  align-items: center;
+.el-menu-item.is-active {
+  font-weight: 600;
 }
 </style>

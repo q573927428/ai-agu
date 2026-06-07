@@ -1,7 +1,20 @@
 /* 全局样式 */
 :root {
   --el-color-primary: #409eff;
-  --el-bg-color-page: #f5f7fa;
+  --el-bg-color-page: #f0f2f5;
+  --sidebar-width: 220px;
+  --sidebar-collapsed-width: 64px;
+  --header-height: 56px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #__nuxt {
+  height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 body {
@@ -9,8 +22,6 @@ body {
     "Noto Sans SC", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  margin: 0;
-  padding: 0;
   background-color: var(--el-bg-color-page);
 }
 
@@ -25,6 +36,15 @@ body {
   border-radius: 3px;
 }
 
+::-webkit-scrollbar-thumb:hover {
+  background: #909399;
+}
+
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* Element Plus 菜单垂直模式下隐藏右边框 */
+.el-menu-vertical-demo {
+  border-right: none;
 }

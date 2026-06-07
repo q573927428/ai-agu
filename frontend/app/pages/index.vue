@@ -149,11 +149,6 @@ function goToStock(code: string) {
 </script>
 
 <style scoped>
-.dashboard {
-  max-width: 1400px;
-  margin: 0 auto;
-}
-
 .page-title {
   font-size: 24px;
   margin-bottom: 20px;

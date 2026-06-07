@@ -104,11 +104,6 @@ function goBack() {
 </script>
 
 <style scoped>
-.stock-detail {
-  max-width: 1400px;
-  margin: 0 auto;
-}
-
 .page-header {
   display: flex;
   align-items: center;

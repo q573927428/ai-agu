@@ -67,11 +67,6 @@ function goToStock(code: string) {
 </script>
 
 <style scoped>
-.rankings-page {
-  max-width: 1400px;
-  margin: 0 auto;
-}
-
 .page-header {
   display: flex;
   justify-content: space-between;
