@@ -25,7 +25,10 @@ class Predictor:
         """加载最近训练的20日预测模型用于集成预测"""
         records = (
             self.db.query(ModelRecord)
-            .filter(ModelRecord.model_path.isnot(None))
+            .filter(
+                ModelRecord.model_path.isnot(None),
+                ~ModelRecord.model_version.like("1d_model%"),
+            )
             .order_by(ModelRecord.id.desc())
             .limit(max_models)
             .all()
