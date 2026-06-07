@@ -42,9 +42,14 @@
         </template>
         <el-descriptions :column="3" border>
           <el-descriptions-item label="预测日期">{{ stockPrediction.predict_date }}</el-descriptions-item>
-          <el-descriptions-item label="预测收益率">
+          <!-- <el-descriptions-item label="预测收益率（20天）">
             <span :style="{ color: getReturnColor(stockPrediction.predicted_return) }">
               {{ formatPercent(stockPrediction.predicted_return) }}
+            </span>
+          </el-descriptions-item> -->
+          <el-descriptions-item label="预测收益率（次日）">
+            <span :style="{ color: getReturnColor(stockPrediction.predicted_return_1d) }">
+              {{ formatPercent(stockPrediction.predicted_return_1d) }}
             </span>
           </el-descriptions-item>
           <el-descriptions-item label="置信度">
