@@ -10,7 +10,7 @@
       <el-header class="app-header">
         <div class="header-left">
           <el-button
-            :icon="isCollapse ? Expand : Fold"
+            :icon="isCollapse ? ElIconExpand : ElIconFold"
             text
             @click="isCollapse = !isCollapse"
             class="collapse-btn"
