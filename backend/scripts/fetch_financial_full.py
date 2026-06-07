@@ -258,6 +258,10 @@ def fetch_table(db: Session, api_name: str, api_func, model_cls, table_name: str
                 if src_col in row.index:
                     val = row.get(src_col)
                     if val is not None and not (isinstance(val, float) and __import__('numpy').isnan(val)):
+                        # gross_margin 值校验：Tushare 偶尔返回金额绝对值而非百分比
+                        if dst_col == "gross_margin" and abs(float(val)) > 1000:
+                            logger.debug(f"    ↪ {stock_code} gross_margin={val} 疑似金额非百分比, 跳过该字段")
+                            continue
                         rec[dst_col] = float(val)
 
             all_records.append(rec)

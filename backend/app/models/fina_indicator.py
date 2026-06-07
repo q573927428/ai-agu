@@ -20,7 +20,7 @@ class FinaIndicator(Base):
     # ── 盈利能力 ──
     roe = Column(DECIMAL(10, 4), comment="净资产收益率(%)")
     roa = Column(DECIMAL(10, 4), comment="总资产收益率(%)")
-    gross_margin = Column(DECIMAL(10, 4), comment="销售毛利率(%)")
+    gross_margin = Column(DECIMAL(16, 4), comment="销售毛利率(%)")
     net_margin = Column(DECIMAL(10, 4), comment="销售净利率(%)")
     eps = Column(DECIMAL(10, 4), comment="每股收益")
 
