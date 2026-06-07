@@ -15,19 +15,19 @@
           <div class="market-grid">
             <div class="market-item">
               <div class="label">上证指数</div>
-              <div class="value">--</div>
+              <div class="value">{{ marketOverview.market_index?.sh_index ?? "--" }}</div>
             </div>
             <div class="market-item">
               <div class="label">深证成指</div>
-              <div class="value">--</div>
+              <div class="value">{{ marketOverview.market_index?.sz_index ?? "--" }}</div>
             </div>
             <div class="market-item">
               <div class="label">上涨家数</div>
-              <div class="value">--</div>
+              <div class="value">{{ marketOverview.market_stats?.up_count ?? "--" }}</div>
             </div>
             <div class="market-item">
               <div class="label">下跌家数</div>
-              <div class="value">--</div>
+              <div class="value">{{ marketOverview.market_stats?.down_count ?? "--" }}</div>
             </div>
           </div>
         </el-card>
@@ -65,7 +65,7 @@
           <el-descriptions :column="4" border>
             <el-descriptions-item label="模型版本">{{ modelStatus.model_version || "--" }}</el-descriptions-item>
             <el-descriptions-item label="最近训练">{{ modelStatus.last_train_date || "--" }}</el-descriptions-item>
-            <el-descriptions-item label="最新 IC">{{ modelStatus.latest_ic?.toFixed(4) || "--" }}</el-descriptions-item>
+            <el-descriptions-item label="最新 IC">{{ modelStatus.latest_ic != null ? modelStatus.latest_ic.toFixed(4) : "--" }}</el-descriptions-item>
             <el-descriptions-item label="模型状态">
               <el-tag :type="modelStatus.is_active ? 'success' : 'info'" size="small">
                 {{ modelStatus.is_active ? "活跃" : "未训练" }}
@@ -82,19 +82,26 @@
 import { ref, onMounted, computed } from "vue";
 import { useRouter } from "vue-router";
 import { useApi } from "~/composables/useApi";
-import type { RankingItem } from "~/types/api";
+import type { RankingItem, MarketOverview } from "~/types/api";
 
 const router = useRouter();
-const { fetchRankings } = useApi();
+const { fetchRankings, fetchMarketOverview } = useApi();
 
 const loading = ref(true);
 const topRankings = ref<RankingItem[]>([]);
-const modelStatus = ref({
-  model_version: "",
-  last_train_date: null as string | null,
-  latest_ic: 0,
-  is_active: false,
+const marketOverview = ref<MarketOverview>({
+  market_index: { sh_index: 0, sh_change: 0, sz_index: 0, sz_change: 0 },
+  market_stats: { up_count: 0, down_count: 0, flat_count: 0, advance_decline_ratio: 0 },
+  top_industries: [],
+  model_status: {
+    model_version: "",
+    last_train_date: null,
+    latest_ic: 0,
+    is_active: false,
+  },
 });
+
+const modelStatus = computed(() => marketOverview.value.model_status);
 
 const marketDate = computed(() => {
   return new Date().toLocaleDateString("zh-CN");
@@ -102,10 +109,21 @@ const marketDate = computed(() => {
 
 onMounted(async () => {
   loading.value = true;
-  const result = await fetchRankings();
-  if (result.data?.rankings) {
-    topRankings.value = result.data.rankings.slice(0, 10);
+
+  // 并发请求排名和市场概览
+  const [rankingRes, overviewRes] = await Promise.all([
+    fetchRankings(),
+    fetchMarketOverview(),
+  ]);
+
+  if (rankingRes.data?.rankings) {
+    topRankings.value = rankingRes.data.rankings.slice(0, 10);
   }
+
+  if (overviewRes.data) {
+    marketOverview.value = overviewRes.data;
+  }
+
   loading.value = false;
 });
 

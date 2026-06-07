@@ -1,20 +1,18 @@
-import pymysql
-conn = pymysql.connect(host='localhost', user='agu_user', password='agu123', database='agu_quant')
-cur = conn.cursor()
-cur.execute('SELECT COUNT(*), MIN(trade_date), MAX(trade_date), COUNT(DISTINCT trade_date) FROM factor_store')
-row = cur.fetchone()
-print(f"factor_store: count={row[0]} min={row[1]} max={row[2]} distinct_dates={row[3]}")
+"""检查数据库表结构"""
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from sqlalchemy import text
+from app.utils.db_utils import engine
 
-cur.execute('SELECT COUNT(*), COUNT(DISTINCT trade_date), MIN(trade_date), MAX(trade_date) FROM stock_daily')
-row = cur.fetchone()
-print(f"stock_daily: count={row[0]} distinct_dates={row[1]} min={row[2]} max={row[3]}")
+with engine.connect() as conn:
+    tables = conn.execute(text("SHOW TABLES")).fetchall()
+    print("数据库中的表:")
+    for t in tables:
+        print(f"  - {t[0]}")
 
-cur.execute('SELECT COUNT(*) FROM model_record')
-row = cur.fetchone()
-print(f"model_record: count={row[0]}")
-
-cur.execute('SELECT COUNT(*) FROM prediction')
-row = cur.fetchone()
-print(f"prediction: count={row[0]}")
-
-conn.close()
+    # 检查 index_daily 表结构
+    if ("index_daily",) in tables:
+        print("\nindex_daily 表结构:")
+        cols = conn.execute(text("DESCRIBE index_daily")).fetchall()
+        for c in cols:
+            print(f"  {c[0]:15s} {c[1]:20s}")

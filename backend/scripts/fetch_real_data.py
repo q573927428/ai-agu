@@ -33,6 +33,7 @@ from app.models.balancesheet import Balancesheet
 from app.models.cashflow import Cashflow
 from app.models.fina_indicator import FinaIndicator
 from app.models.base import Base
+from app.models.index_daily import IndexDaily
 from app.utils.date_utils import is_trade_day, get_latest_trade_day
 
 # ---------- Tushare Pro 初始化 ----------
@@ -104,6 +105,7 @@ def parse_args():
     parser.add_argument("--skip-macro", action="store_true", help="跳过宏观数据")
     parser.add_argument("--skip-financial", action="store_true", help="跳过财务数据")
     parser.add_argument("--skip-stock-basic", action="store_true", help="跳过股票基础信息拉取")
+    parser.add_argument("--skip-index", action="store_true", help="跳过指数行情拉取")
     parser.add_argument("--delay", type=float, default=0.35,
                         help="每次请求间隔秒数 (默认0.35，Tushare免费版500次/分钟)")
     return parser.parse_args()
@@ -853,7 +855,69 @@ def main():
             top_n=args.top,
         )
 
-        # ========== ③ 宏观数据 ==========
+        # ========== ③ 指数行情 ==========
+        if not args.skip_index:
+            logger.info(f"\n{'='*50}")
+            logger.info("📊 拉取指数行情 (pro.index_daily)")
+            logger.info(f"{'='*50}")
+            # 需要跟踪的核心指数
+            index_ts_codes = [
+                "000001.SH",  # 上证指数
+                "399001.SZ",  # 深证成指
+                "000300.SH",  # 沪深300
+                "000016.SH",  # 上证50
+                "000905.SH",  # 中证500
+                "399006.SZ",  # 创业板指
+                "000688.SH",  # 科创50
+            ]
+            total_index_count = 0
+            for dt in dates:
+                trade_date_str = dt.replace("-", "")
+                logger.info(f"  拉取指数 {dt}...")
+                for ts_code in index_ts_codes:
+                    _rate_limit(args.delay)
+                    try:
+                        df = pro.index_daily(ts_code=ts_code, trade_date=trade_date_str)
+                        if df is not None and not df.empty:
+                            row = df.iloc[0]
+                            existing = (
+                                db.query(IndexDaily)
+                                .filter(
+                                    IndexDaily.ts_code == ts_code,
+                                    IndexDaily.trade_date == dt,
+                                )
+                                .first()
+                            )
+                            if existing:
+                                continue
+                            rec = IndexDaily(
+                                ts_code=ts_code,
+                                trade_date=datetime.strptime(trade_date_str, "%Y%m%d").date(),
+                                open=_safe_decimal(row.get("open"), 3),
+                                high=_safe_decimal(row.get("high"), 3),
+                                low=_safe_decimal(row.get("low"), 3),
+                                close=_safe_decimal(row.get("close"), 3),
+                                pre_close=_safe_decimal(row.get("pre_close"), 3),
+                                change=_safe_decimal(row.get("change"), 3),
+                                pct_chg=_safe_decimal(row.get("pct_chg"), 6),
+                                vol=_safe_decimal(row.get("vol"), 2),
+                                amount=_safe_decimal(row.get("amount"), 2),
+                            )
+                            db.add(rec)
+                            total_index_count += 1
+                        # else: 指数当天无交易数据（非交易日），跳过
+                    except Exception as e:
+                        err_msg = str(e)
+                        if "频率超限" in err_msg or "超限" in err_msg or "rate limit" in err_msg.lower():
+                            logger.warning(f"    ⚠️ [{ts_code}] 频率超限，等待61s...")
+                            time.sleep(61)
+                        else:
+                            logger.warning(f"    ⚠️ [{ts_code}] {dt} 获取失败: {e}")
+                db.commit()
+                logger.info(f"    ✅ {dt} -> {len(index_ts_codes)} 个指数")
+            logger.info(f"  ✅ 指数行情拉取完成，库内总计: {db.query(IndexDaily).count()}")
+
+        # ========== ④ 宏观数据 ==========
         if not args.skip_macro:
             logger.info(f"\n{'='*50}")
             logger.info("📊 拉取宏观经济数据")
@@ -878,6 +942,7 @@ def main():
         logger.info(f"  数据库股票总数: {db.query(StockBasic).count()}")
         logger.info(f"  日行情总记录数: {db.query(StockDaily).count()}")
         logger.info(f"  宏观数据条数: {db.query(MacroData).count()}")
+        logger.info(f"  指数行情条数: {db.query(IndexDaily).count()}")
         logger.info(f"  利润表记录数: {db.query(Income).count()}")
         logger.info(f"  资产负债表记录数: {db.query(Balancesheet).count()}")
         logger.info(f"  现金流量表记录数: {db.query(Cashflow).count()}")
