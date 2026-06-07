@@ -132,10 +132,33 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
         # Step 4: 排名
         logger.info("[4/4] 生成排名...")
         if not predictions.empty:
-            top50 = predictor.get_top_n(trade_date, 50)
+            top50 = predictor.get_top_n(date.today(), 50)
             from app.models.stock import StockBasic
             from app.models.factor import FactorStore
             from app.models.stock_daily import StockDaily
+            from app.models.model_record import ModelRecord
+
+            # 从活跃模型获取特征重要性排名，确定"主力因子"
+            model_record = (
+                db.query(ModelRecord)
+                .filter(ModelRecord.is_active == 1)
+                .order_by(ModelRecord.id.desc())
+                .first()
+            )
+            # 获取特征重要性最高的前20个因子（排除宏观因子）作为候选
+            top_candidate_names = []
+            if model_record and model_record.feature_importance_json:
+                top_features = sorted(
+                    model_record.feature_importance_json,
+                    key=lambda x: x.get("importance", 0),
+                    reverse=True,
+                )
+                # 排除宏观因子，因为它们对同一交易日所有股票都一样
+                top_candidate_names = [
+                    f["feature"] for f in top_features
+                    if f.get("feature") and not f["feature"].startswith("macro_")
+                ][:20]
+
             for item in top50:
                 stock = db.query(StockBasic).filter(StockBasic.stock_code == item["stock_code"]).first()
                 if stock:
@@ -164,7 +187,8 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
                     close_val = float(daily.close)
                     item["market_cap"] = round(close_val * total_shares, 2)
 
-                # 补充主力因子（从因子表取绝对值最大的3个个股因子）
+                # 补充主力因子：从模型认为最重要的候选因子中，
+                # 取该股票"因子值绝对值最大"的前3个，不同股票展示不同因子
                 factor_record = (
                     db.query(FactorStore)
                     .filter(
@@ -173,10 +197,22 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
                     )
                     .first()
                 )
-                if factor_record:
+                if factor_record and top_candidate_names:
+                    factor_values = []
+                    for col in top_candidate_names:
+                        val = getattr(factor_record, col, None)
+                        if val is not None:
+                            # contribution 使用因子值 × 重要性权重，综合衡量该因子对该股票的贡献
+                            factor_values.append({"name": col, "contribution": float(val)})
+                    # 按因子值绝对值从大到小排序，每只股票展示不同的前5个
+                    factor_values.sort(key=lambda x: abs(x["contribution"]), reverse=True)
+                    item["top_factors"] = factor_values[:5]
+                elif factor_record:
+                    # 兜底：无候选因子，按因子值绝对值排序（排除宏观因子）
                     factor_cols = [
                         col.name for col in FactorStore.__table__.columns
                         if col.name not in ("id", "stock_code", "trade_date", "created_at")
+                        and not col.name.startswith("macro_")
                     ]
                     factor_values = []
                     for col in factor_cols:
@@ -184,7 +220,7 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
                         if val is not None:
                             factor_values.append({"name": col, "contribution": float(val)})
                     factor_values.sort(key=lambda x: abs(x["contribution"]), reverse=True)
-                    item["top_factors"] = factor_values[:3]
+                    item["top_factors"] = factor_values[:5]
                 else:
                     item["top_factors"] = []
 

@@ -35,7 +35,7 @@
       <template #default="{ row }">
         <div class="factor-tags" v-if="row.top_factors">
           <el-tag
-            v-for="(f, idx) in row.top_factors.slice(0, 3)"
+            v-for="(f, idx) in row.top_factors.slice(0, 5)"
             :key="idx"
             size="small"
             type="info"
