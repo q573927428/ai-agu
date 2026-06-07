@@ -41,7 +41,14 @@ try:
     logger.info(f"训练范围: {start} ~ {end}")
     trainer = Trainer(db)
     result = trainer.train(start, end)
-    logger.info(f"训练结果: {result['status']} 版本={result.get('model_version','?')}")
+    if result.get("note") == "multi-model ensemble":
+        logger.info(
+            f"训练结果: {result['status']} "
+            f"集成子模型数={result.get('ensemble_size', '?')} "
+            f"IC均值={result.get('valid_ic_mean', '?'):.4f}"
+        )
+    else:
+        logger.info(f"训练结果: {result['status']} 版本={result.get('model_version','?')}")
 
 except Exception as e:
     logger.error(f"失败: {e}")

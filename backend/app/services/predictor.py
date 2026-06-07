@@ -1,4 +1,4 @@
-"""预测器 - 每日预测全市场股票"""
+"""预测器 - 每日预测全市场股票（多模型集成版）"""
 import os
 import pandas as pd
 import numpy as np
@@ -6,7 +6,7 @@ from datetime import datetime, date, timedelta
 from typing import Optional, List
 from loguru import logger
 from sqlalchemy.orm import Session
-from app.ml.model import LightGBMModel
+from app.ml.model import LightGBMModel, EnsembleModel
 from app.models.factor import FactorStore
 from app.models.prediction import Prediction
 from app.models.model_record import ModelRecord
@@ -14,36 +14,49 @@ from app.config import settings
 
 
 class Predictor:
-    """预测器"""
+    """预测器（多模型集成）"""
 
     def __init__(self, db: Session):
         self.db = db
-        self.model = None
+        self.ensemble = EnsembleModel()
 
-    def _load_active_model(self):
-        """加载当前活跃模型"""
-        record = (
+    def _load_active_models(self, max_models: int = 5):
+        """加载多个历史活跃模型用于集成预测"""
+        # 优先加载最近训练的 is_active=1 的模型
+        # 同时加载多个历史模型，最多 max_models 个
+        records = (
             self.db.query(ModelRecord)
-            .filter(ModelRecord.is_active == 1)
+            .filter(ModelRecord.is_active == 1, ModelRecord.model_path.isnot(None))
             .order_by(ModelRecord.id.desc())
-            .first()
+            .limit(max_models)
+            .all()
         )
 
-        if not record or not record.model_path:
+        if not records:
             logger.warning("没有活跃模型")
             return False
 
-        if not os.path.exists(record.model_path):
-            logger.warning(f"模型文件不存在: {record.model_path}")
+        self.ensemble = EnsembleModel()
+        loaded_count = 0
+        for record in records:
+            if not record.model_path or not os.path.exists(record.model_path):
+                logger.warning(f"模型文件不存在: {record.model_path}")
+                continue
+            model = LightGBMModel(record.model_path)
+            self.ensemble.add_model(model, record.model_version, record.id)
+            loaded_count += 1
+
+        if loaded_count == 0:
+            logger.error("没有成功加载任何模型")
             return False
 
-        self.model = LightGBMModel(record.model_path)
+        logger.info(f"集成模型加载完成: {loaded_count} 个模型")
         return True
 
     def predict_daily(self, trade_date: str) -> pd.DataFrame:
-        """每日预测全市场股票"""
-        # 加载模型
-        if not self._load_active_model():
+        """每日预测全市场股票（多模型集成版）"""
+        # 加载集成模型（多个模型）
+        if not self._load_active_models():
             logger.error("无法加载模型，跳过预测")
             return pd.DataFrame()
 
@@ -73,15 +86,15 @@ class Predictor:
 
         X = pd.DataFrame(records)
 
-        # 预测
-        predictions = self.model.predict(X)
+        # ===== 集成分预测 =====
+        # 返回: mean_preds(百分数), confidences(0-1)
+        mean_preds, confidences = self.ensemble.predict(X)
 
-        # 模型版本
-        model_version = (
-            self.db.query(ModelRecord)
-            .filter(ModelRecord.is_active == 1)
-            .value(ModelRecord.model_version)
-        ) or "unknown"
+        # 模型版本号（取主要模型）
+        model_versions = self.ensemble.model_versions
+        model_version = "+".join(model_versions[:3]) if model_versions else "ensemble"
+        if len(model_versions) > 3:
+            model_version += f"+{len(model_versions) - 3}more"
 
         # 保存预测结果
         predict_date = date.today()
@@ -91,20 +104,16 @@ class Predictor:
         self.db.query(Prediction).filter(Prediction.predict_date == predict_date).delete()
 
         results = []
-        for i, (stock_code, pred) in enumerate(zip(stock_codes, predictions)):
-            # 置信度基于模型原始输出(百分数)计算，典型范围0~30，归一化到0-1
-            raw_pred = float(pred)
-            confidence = min(max(float(np.abs(raw_pred)) / 30, 0), 1)
-
-            # 模型预测值为百分数（如5.2表示5.2%），存储为小数（0.052）
-            pred_decimal = raw_pred / 100.0
+        for stock_code, pred_pct, confidence in zip(stock_codes, mean_preds, confidences):
+            # pred_pct 是百分数（如 5.2 表示 5.2%），存储为小数（0.052）
+            pred_decimal = float(pred_pct) / 100.0
 
             prediction = Prediction(
                 stock_code=stock_code,
                 predict_date=predict_date,
                 target_date=target_date,
                 predicted_return=round(pred_decimal, 6),
-                confidence=round(confidence, 4),
+                confidence=round(float(confidence), 4),
                 model_version=model_version,
                 rank_score=pred_decimal,
             )
@@ -112,7 +121,7 @@ class Predictor:
             results.append({
                 "stock_code": stock_code,
                 "predicted_return": pred_decimal,
-                "confidence": confidence,
+                "confidence": float(confidence),
             })
 
         self.db.commit()
@@ -121,7 +130,12 @@ class Predictor:
         results.sort(key=lambda x: x["predicted_return"], reverse=True)
 
         df = pd.DataFrame(results)
-        logger.info(f"预测完成: {len(results)} 只股票, 模型版本: {model_version}")
+        logger.info(
+            f"集成预测完成: {len(results)} 只股票, "
+            f"集成模型数: {self.ensemble.count}, "
+            f"模型版本: {model_version}, "
+            f"置信度均值: {np.mean(confidences):.4f}"
+        )
         return df
 
     def get_top_n(self, predict_date: str, n: int = 50) -> List[dict]:

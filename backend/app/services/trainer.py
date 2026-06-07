@@ -1,9 +1,9 @@
-"""LightGBM训练器"""
+"""LightGBM训练器（多模型集成版）"""
 import os
 import pandas as pd
 import numpy as np
 from datetime import datetime, date
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from loguru import logger
 from sqlalchemy.orm import Session
 from sklearn.model_selection import train_test_split
@@ -14,12 +14,102 @@ from app.models.stock_daily import StockDaily
 from app.config import settings
 
 
+# ============ 多模型集成训练的异构超参数配置 ============
+# 不同模型的超参数不同，使其从不同角度学习，提高集成多样性
+ENSEMBLE_PARAMS: List[Dict[str, Any]] = [
+    {
+        # 模型A: 默认主模型
+        "objective": "regression",
+        "metric": "rmse",
+        "boosting_type": "gbdt",
+        "num_leaves": 31,
+        "max_depth": 7,
+        "learning_rate": 0.05,
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 5,
+        "min_child_samples": 20,
+        "reg_alpha": 0.1,
+        "reg_lambda": 0.1,
+        "verbose": -1,
+        "random_state": 42,
+    },
+    {
+        # 模型B: 更浅的树 + 更高学习率（更快适应，但防止过拟合）
+        "objective": "regression",
+        "metric": "rmse",
+        "boosting_type": "gbdt",
+        "num_leaves": 15,
+        "max_depth": 5,
+        "learning_rate": 0.08,
+        "feature_fraction": 0.7,
+        "bagging_fraction": 0.7,
+        "bagging_freq": 3,
+        "min_child_samples": 30,
+        "reg_alpha": 0.2,
+        "reg_lambda": 0.3,
+        "verbose": -1,
+        "random_state": 100,
+    },
+    {
+        # 模型C: 更深 + dropout-like 正则（更复杂，但也更谨慎）
+        "objective": "regression",
+        "metric": "rmse",
+        "boosting_type": "gbdt",
+        "num_leaves": 63,
+        "max_depth": 10,
+        "learning_rate": 0.03,
+        "feature_fraction": 0.6,
+        "bagging_fraction": 0.6,
+        "bagging_freq": 7,
+        "min_child_samples": 10,
+        "reg_alpha": 0.5,
+        "reg_lambda": 0.5,
+        "verbose": -1,
+        "random_state": 7,
+    },
+    {
+        # 模型D: 随机森林模式（对异常值更鲁棒）
+        "objective": "regression",
+        "metric": "rmse",
+        "boosting_type": "rf",
+        "num_leaves": 31,
+        "max_depth": 7,
+        "learning_rate": 0.05,
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 1,
+        "min_child_samples": 20,
+        "reg_alpha": 0.1,
+        "reg_lambda": 0.1,
+        "verbose": -1,
+        "random_state": 2024,
+    },
+    {
+        # 模型E: 更保守的梯度提升（更低的特征采样，更强的L2）
+        "objective": "regression",
+        "metric": "rmse",
+        "boosting_type": "gbdt",
+        "num_leaves": 23,
+        "max_depth": 6,
+        "learning_rate": 0.04,
+        "feature_fraction": 0.5,
+        "bagging_fraction": 0.75,
+        "bagging_freq": 4,
+        "min_child_samples": 25,
+        "reg_alpha": 1.0,
+        "reg_lambda": 2.0,
+        "verbose": -1,
+        "random_state": 888,
+    },
+]
+
+
 class Trainer:
-    """LightGBM训练器"""
+    """训练器 - 同时训练多个异构模型用于集成"""
 
     def __init__(self, db: Session):
         self.db = db
-        self.model = LightGBMModel()
 
     def prepare_training_data(self, start_date: str, end_date: str) -> tuple:
         """准备训练数据"""
@@ -113,59 +203,172 @@ class Trainer:
         logger.info(f"训练数据: {len(X_train)} 条, 验证数据: {len(X_valid)} 条, 特征: {len(feature_cols)} 个")
         return X_train, y_train, X_valid, y_valid
 
-    def train(self, start_date: str, end_date: str, params: Optional[Dict] = None) -> Dict[str, Any]:
-        """训练模型"""
-        result = self.prepare_training_data(start_date, end_date)
-        if result[0] is None:
-            return {"status": "failed", "message": "训练数据不足"}
+    def _train_single_model(
+        self,
+        X_train: pd.DataFrame,
+        y_train: pd.Series,
+        X_valid: pd.DataFrame,
+        y_valid: pd.Series,
+        params: Dict[str, Any],
+        model_tag: str,
+    ) -> Dict[str, Any]:
+        """训练单个子模型"""
+        model = LightGBMModel()
+        train_result = model.train(X_train, y_train, X_valid, y_valid, params)
 
-        X_train, y_train, X_valid, y_valid = result
-
-        # 训练
-        train_result = self.model.train(X_train, y_train, X_valid, y_valid, params)
-        train_result["num_samples"] = len(X_train)
-        train_result["num_features"] = len(X_train.columns)
-
-        # 保存模型
-        model_version = f"v{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        model_path = os.path.join(settings.model_dir, f"model_{model_version}.txt")
+        # 生成版本号
+        now = datetime.now()
+        model_version = f"{model_tag}_v{now.strftime('%Y%m%d_%H%M%S')}"
+        model_path = os.path.join(settings.model_dir, f"ensemble_{model_version}.txt")
         os.makedirs(settings.model_dir, exist_ok=True)
-        self.model.save_model(model_path)
+        model.save_model(model_path)
 
         # 特征重要性
-        feature_importance = self.model.get_feature_importance(list(X_train.columns))
+        feature_importance = model.get_feature_importance(list(X_train.columns))
         top_features = feature_importance.head(20).to_dict("records")
 
-        # 记录模型信息
-        model_record = ModelRecord(
-            model_version=model_version,
-            train_date=date.today(),
-            data_start_date=datetime.strptime(start_date, "%Y-%m-%d").date(),
-            data_end_date=datetime.strptime(end_date, "%Y-%m-%d").date(),
-            num_samples=len(X_train),
-            num_features=len(X_train.columns),
-            params_json=params or {},
-            train_ic=train_result.get("valid_ic", 0),
-            valid_ic=train_result.get("valid_ic", 0),
-            train_rank_ic=train_result.get("valid_rank_ic", 0),
-            valid_rank_ic=train_result.get("valid_rank_ic", 0),
-            feature_importance_json=top_features,
-            model_path=model_path,
-            is_active=1,
-        )
-
-        # 将旧模型设为非活跃
-        self.db.query(ModelRecord).filter(ModelRecord.is_active == 1).update({"is_active": 0})
-        self.db.add(model_record)
-        self.db.commit()
-
         return {
-            "status": "success",
+            "model": model,
             "model_version": model_version,
             "model_path": model_path,
             "num_samples": len(X_train),
             "num_features": len(X_train.columns),
             "valid_ic": train_result.get("valid_ic", 0),
             "valid_rank_ic": train_result.get("valid_rank_ic", 0),
+            "params": params,
             "top_features": top_features[:10],
+        }
+
+    def train(
+        self,
+        start_date: str,
+        end_date: str,
+        params: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """
+        训练多模型集成（默认训练5个异构模型）
+
+        Args:
+            start_date: 训练数据起始日期
+            end_date: 训练数据截止日期
+            params: 如果提供，仅训练单个模型（兼容旧调用）
+
+        Returns:
+            训练结果
+        """
+        result = self.prepare_training_data(start_date, end_date)
+        if result[0] is None:
+            return {"status": "failed", "message": "训练数据不足"}
+
+        X_train, y_train, X_valid, y_valid = result
+
+        # ====== 如果传入了 params，兼容旧调用：只训练一个模型 ======
+        if params is not None:
+            model = LightGBMModel()
+            train_result = model.train(X_train, y_train, X_valid, y_valid, params)
+            model_version = f"v{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            model_path = os.path.join(settings.model_dir, f"model_{model_version}.txt")
+            os.makedirs(settings.model_dir, exist_ok=True)
+            model.save_model(model_path)
+
+            feature_importance = model.get_feature_importance(list(X_train.columns))
+            top_features = feature_importance.head(20).to_dict("records")
+
+            # 将旧模型设为非活跃
+            self.db.query(ModelRecord).filter(ModelRecord.is_active == 1).update({"is_active": 0})
+
+            model_record = ModelRecord(
+                model_version=model_version,
+                train_date=date.today(),
+                data_start_date=datetime.strptime(start_date, "%Y-%m-%d").date(),
+                data_end_date=datetime.strptime(end_date, "%Y-%m-%d").date(),
+                num_samples=len(X_train),
+                num_features=len(X_train.columns),
+                params_json=params or {},
+                train_ic=train_result.get("valid_ic", 0),
+                valid_ic=train_result.get("valid_ic", 0),
+                train_rank_ic=train_result.get("valid_rank_ic", 0),
+                valid_rank_ic=train_result.get("valid_rank_ic", 0),
+                feature_importance_json=top_features,
+                model_path=model_path,
+                is_active=1,
+            )
+            self.db.add(model_record)
+            self.db.commit()
+
+            return {
+                "status": "success",
+                "model_version": model_version,
+                "model_path": model_path,
+                "num_samples": len(X_train),
+                "num_features": len(X_train.columns),
+                "valid_ic": train_result.get("valid_ic", 0),
+                "valid_rank_ic": train_result.get("valid_rank_ic", 0),
+                "top_features": top_features[:10],
+                "note": "single model (legacy mode)",
+            }
+
+        # ====== 默认：训练多个异构模型用于集成 ======
+        model_results = []
+        for idx, model_params in enumerate(ENSEMBLE_PARAMS):
+            model_tag = f"model{chr(65 + idx)}"  # A, B, C, D, E
+            try:
+                logger.info(f"训练集成子模型 {model_tag} ({idx + 1}/{len(ENSEMBLE_PARAMS)})...")
+                m_result = self._train_single_model(
+                    X_train, y_train, X_valid, y_valid, model_params, model_tag
+                )
+                model_results.append(m_result)
+                logger.info(f"模型 {model_tag} 训练完成, IC={m_result['valid_ic']:.4f}")
+            except Exception as e:
+                logger.error(f"模型 {model_tag} 训练失败: {e}")
+                continue
+
+        if not model_results:
+            return {"status": "failed", "message": "所有模型训练失败"}
+
+        # 将旧模型设为非活跃
+        self.db.query(ModelRecord).filter(ModelRecord.is_active == 1).update({"is_active": 0})
+
+        # 保存所有模型到数据库
+        saved_records = []
+        for m_res in model_results:
+            record = ModelRecord(
+                model_version=m_res["model_version"],
+                train_date=date.today(),
+                data_start_date=datetime.strptime(start_date, "%Y-%m-%d").date(),
+                data_end_date=datetime.strptime(end_date, "%Y-%m-%d").date(),
+                num_samples=m_res["num_samples"],
+                num_features=m_res["num_features"],
+                params_json=m_res["params"],
+                train_ic=m_res["valid_ic"],
+                valid_ic=m_res["valid_ic"],
+                train_rank_ic=m_res["valid_rank_ic"],
+                valid_rank_ic=m_res["valid_rank_ic"],
+                feature_importance_json=m_res["top_features"],
+                model_path=m_res["model_path"],
+                is_active=1,
+            )
+            self.db.add(record)
+            self.db.flush()
+            saved_records.append({**m_res, "db_id": record.id})
+
+        self.db.commit()
+
+        # 计算集成指标：各模型的 IC 统计
+        ics = [m["valid_ic"] for m in model_results]
+
+        logger.info(
+            f"多模型集成训练完成: {len(model_results)} 个子模型, "
+            f"IC均值: {np.mean(ics):.4f}, "
+            f"IC标准差: {np.std(ics):.4f}"
+        )
+
+        return {
+            "status": "success",
+            "ensemble_size": len(model_results),
+            "model_versions": [m["model_version"] for m in model_results],
+            "model_paths": [m["model_path"] for m in model_results],
+            "valid_ic_mean": float(np.mean(ics)),
+            "valid_ic_std": float(np.std(ics)),
+            "note": "multi-model ensemble",
         }

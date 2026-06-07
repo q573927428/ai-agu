@@ -79,7 +79,14 @@ def _check_and_train_model(db: Session, trade_date: str) -> bool:
     result = trainer.train(start_date=train_start, end_date=train_end)
 
     if result.get("status") == "success":
-        logger.info(f"✅ 模型训练成功: {result['model_version']}, IC={result['valid_ic']:.4f}")
+        if result.get("note") == "multi-model ensemble":
+            logger.info(
+                f"✅ 多模型集成训练成功: "
+                f"{result['ensemble_size']} 个子模型, "
+                f"IC均值={result['valid_ic_mean']:.4f}"
+            )
+        else:
+            logger.info(f"✅ 模型训练成功: {result['model_version']}, IC={result['valid_ic']:.4f}")
         return True
     else:
         logger.warning(f"⚠️ 模型训练失败: {result.get('message', '未知错误')}")
