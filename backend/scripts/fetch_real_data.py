@@ -681,6 +681,75 @@ def _safe_date_str(val) -> str | None:
         return None
 
 
+def _get_next_report_periods(latest_end_date: date) -> list[str]:
+    """
+    根据数据库中已有的最新 end_date，计算需要拉取的下一个报告期。
+
+    中国A股财报周期：
+      - 一季报: 03-31 (Q1)
+      - 半年报: 06-30 (H1 / Q2)
+      - 三季报: 09-30 (Q3)
+      - 年报:   12-31 (Annual / Q4)
+
+    截止日期（必须在此前发布）：
+      - 一季报: 4月30日
+      - 半年报: 8月31日
+      - 三季报: 10月31日
+      - 年报:   次年4月30日
+
+    判断逻辑：
+      如果最新数据到 2026-03-31，则检查 2026-06-30 是否已过截止日期，
+      已过则拉取，否则说明半年报还没出，没有新数据。
+    """
+    today = date.today()
+    year = latest_end_date.year
+    month = latest_end_date.month
+
+    # 确定当前数据覆盖到哪个季度
+    if month <= 3:
+        current_season = 1  # 最新到 Q1
+    elif month <= 6:
+        current_season = 2  # 最新到 H1
+    elif month <= 9:
+        current_season = 3  # 最新到 Q3
+    else:
+        current_season = 4  # 最新到年报
+
+    # 计算下一个季度的截止日期
+    next_periods = []
+    while len(next_periods) < 4:  # 最多看未来4个季度
+        if current_season == 1:
+            # 一季报 → 下一报告期是半年报 06-30，截止 08-31
+            period_date = date(year, 6, 30)
+            deadline = date(year, 8, 31)
+        elif current_season == 2:
+            # 半年报 → 三季报 09-30，截止 10-31
+            period_date = date(year, 9, 30)
+            deadline = date(year, 10, 31)
+        elif current_season == 3:
+            # 三季报 → 年报 12-31，截止次年 04-30
+            period_date = date(year, 12, 31)
+            deadline = date(year + 1, 4, 30)
+        else:
+            # 年报 → 次年一季报 03-31，截止 04-30
+            period_date = date(year + 1, 3, 31)
+            deadline = date(year + 1, 4, 30)
+
+            # 如果截止日期已过，且该报告期有价值（需要拉取）
+        if today > deadline and period_date > latest_end_date:
+            next_periods.append(period_date.strftime("%Y%m%d"))
+            # 继续检查下一个季度
+            current_season += 1
+            if current_season > 4:
+                current_season = 1
+                year += 1
+            continue
+        else:
+            break
+
+    return next_periods
+
+
 def fetch_financial_data(db: Session, delay: float = 0.35, top_n: int = 0, full_refresh: bool = False) -> bool:
     """
     ④ 拉取上市公司财务数据（Tushare Pro）- 支持增量更新
@@ -689,9 +758,15 @@ def fetch_financial_data(db: Session, delay: float = 0.35, top_n: int = 0, full_
     - pro.cashflow()      → cashflow 表 (现金流量表)
     - pro.fina_indicator() → fina_indicator 表 (财务指标)
 
-    增量更新策略：
-      检测每张表的最大 end_date，仅拉取该日期之后的数据（使用 start_date 参数）
-      首次运行或 full_refresh=True 时拉取全部历史数据
+    增量更新策略（正确使用 Tushare period 参数）：
+      1. 检测每张表的最大 end_date
+      2. 计算下一个需要拉取的报告期（如 Q2 半年报 20260630）
+      3. 如果该报告期已过截止日期（已发布），仅拉取该 period 的数据
+      4. 如果无新报告期，直接跳过整张表的拉取（零请求）
+
+    注意（来自 Tushare 官方文档）：
+      income/balancesheet/cashflow 的 start_date/end_date 参数过滤的是
+      "公告日期(ann_date)"，不是报告期。要过滤报告期必须使用 period 参数。
     """
     from sqlalchemy import func
 
@@ -712,17 +787,20 @@ def fetch_financial_data(db: Session, delay: float = 0.35, top_n: int = 0, full_
     for api_name, api_func, model_cls, table_name, unique_keys in api_configs:
         logger.info(f"  ── 拉取 {api_name} ({table_name}) ──")
 
-        # === 🌟 增量更新：检测数据库中已有数据的最大 end_date ===
+        # === 计算需要拉取的报告期 ===
         if not full_refresh:
             latest_record = db.query(func.max(model_cls.end_date)).scalar()
             if latest_record is not None:
-                start_date = latest_record.strftime("%Y%m%d")
-                logger.info(f"    📅 增量模式：数据库已有 {table_name} 数据至 {latest_record}，仅拉取其后数据")
+                next_periods = _get_next_report_periods(latest_record)
+                if not next_periods:
+                    logger.info(f"    ✅ 无新财报期（库内最新 {latest_record}，截至今日尚未有新的财报发布），跳过 {api_name}")
+                    continue
+                logger.info(f"    📅 增量模式：库内最新 {latest_record} → 需拉取报告期: {next_periods}")
             else:
-                start_date = None
+                next_periods = []  # 空表=全量拉取
                 logger.info(f"    📅 全量模式（首次）：{table_name} 表为空，拉取全部历史数据")
         else:
-            start_date = None
+            next_periods = []
             logger.info(f"    📅 全量刷新模式（--full-financial）：重新拉取 {table_name} 全部历史数据")
 
         all_records = []
@@ -730,19 +808,17 @@ def fetch_financial_data(db: Session, delay: float = 0.35, top_n: int = 0, full_
         skip_count = 0
         error_count = 0
 
-        # 增量模式下可跳过的股票数统计
-        incr_skip_total = 0
-
         for idx, (stock_code, ts_code) in enumerate(stocks):
             if idx % 100 == 0 and idx > 0:
                 logger.info(f"    [{idx}/{total}] {api_name} 处理中... ({success_count} 成功, {skip_count} 跳过)")
 
             _rate_limit(delay)
             try:
-                # 🌟 增量拉取：仅拉取 start_date 之后的数据（Tushare 支持 start_date/end_date 过滤）
+                # 正确使用 period 参数过滤报告期（非 start_date 公告日期）
                 kwargs = {"ts_code": ts_code}
-                if start_date is not None:
-                    kwargs["start_date"] = start_date
+                if next_periods:
+                    # 增量模式：只拉取特定报告期
+                    kwargs["period"] = next_periods[0]
                 df = api_func(**kwargs)
             except Exception as e:
                 err_msg = str(e)
@@ -751,8 +827,8 @@ def fetch_financial_data(db: Session, delay: float = 0.35, top_n: int = 0, full_
                     time.sleep(61)
                     try:
                         kwargs = {"ts_code": ts_code}
-                        if start_date is not None:
-                            kwargs["start_date"] = start_date
+                        if next_periods:
+                            kwargs["period"] = next_periods[0]
                         df = api_func(**kwargs)
                     except Exception as e2:
                         logger.warning(f"    ❌ {stock_code} {api_name} 重试仍失败: {e2}")
