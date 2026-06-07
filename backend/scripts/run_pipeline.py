@@ -135,14 +135,36 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
             top50 = predictor.get_top_n(trade_date, 50)
             from app.models.stock import StockBasic
             from app.models.factor import FactorStore
+            from app.models.stock_daily import StockDaily
             for item in top50:
                 stock = db.query(StockBasic).filter(StockBasic.stock_code == item["stock_code"]).first()
                 if stock:
                     item["stock_name"] = stock.stock_name
                     item["industry"] = stock.industry
 
-                # 补充总市值（从因子表的 stock_size_factor 反推：该因子为 ln(总市值)）
+                # 补充总市值（从原始数据计算：收盘价 × 总股本，避免使用标准化后的因子反推）
                 item["market_cap"] = 0
+                from app.models.balancesheet import Balancesheet
+                daily = (
+                    db.query(StockDaily)
+                    .filter(
+                        StockDaily.stock_code == item["stock_code"],
+                        StockDaily.trade_date == trade_date,
+                    )
+                    .first()
+                )
+                bs = (
+                    db.query(Balancesheet)
+                    .filter(Balancesheet.stock_code == item["stock_code"])
+                    .order_by(Balancesheet.end_date.desc())
+                    .first()
+                )
+                if daily and daily.close and bs and bs.cap_stk:
+                    total_shares = float(bs.cap_stk)
+                    close_val = float(daily.close)
+                    item["market_cap"] = round(close_val * total_shares, 2)
+
+                # 补充主力因子（从因子表取绝对值最大的3个个股因子）
                 factor_record = (
                     db.query(FactorStore)
                     .filter(
@@ -151,12 +173,6 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
                     )
                     .first()
                 )
-                if factor_record and factor_record.stock_size_factor is not None:
-                    # stock_size_factor = ln(total_mv), 反推 total_mv = exp(ln_total_mv)
-                    import math
-                    item["market_cap"] = round(math.exp(float(factor_record.stock_size_factor)), 2)
-
-                # 补充主力因子（从因子表取绝对值最大的3个个股因子）
                 if factor_record:
                     factor_cols = [
                         col.name for col in FactorStore.__table__.columns
