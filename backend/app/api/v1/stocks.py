@@ -75,6 +75,29 @@ def get_stock_detail(code: str, db: Session = Depends(get_db)) -> ApiResponse:
     })
 
 
+@router.get("/{code}/kline")
+def get_stock_kline(code: str, limit: int = Query(120, ge=30, le=500), db: Session = Depends(get_db)) -> ApiResponse:
+    """获取股票日K线数据（用于K线图展示）"""
+    service = StockService(db)
+    records = service.get_stock_daily_history(code, limit)
+    return ApiResponse(data={
+        "stock_code": code,
+        "kline": [
+            {
+                "trade_date": str(r.trade_date),
+                "open": float(r.open) if r.open else None,
+                "high": float(r.high) if r.high else None,
+                "low": float(r.low) if r.low else None,
+                "close": float(r.close) if r.close else None,
+                "volume": int(r.volume) if r.volume else None,
+                "amount": float(r.amount) if r.amount else None,
+                "pct_chg": float(r.pct_chg) if r.pct_chg else None,
+            }
+            for r in records
+        ],
+    })
+
+
 @router.get("/{code}/factors")
 def get_stock_factors(code: str, db: Session = Depends(get_db)) -> ApiResponse:
     """获取股票因子数据"""

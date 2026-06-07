@@ -63,6 +63,13 @@ export function useApi() {
   }
 
   /**
+   * 获取股票日K线数据
+   */
+  async function fetchStockKline(code: string, limit: number = 120): Promise<ApiResponse<any>> {
+    return request<any>(`/api/v1/stocks/${code}/kline?limit=${limit}`);
+  }
+
+  /**
    * 获取股票预测历史
    */
   async function fetchStockPrediction(code: string): Promise<ApiResponse<any>> {
@@ -95,6 +102,7 @@ export function useApi() {
     fetchStockDetail,
     fetchStockFactors,
     fetchStockFinancial,
+    fetchStockKline,
     fetchStockPrediction,
     fetchMarketOverview,
     fetchFactorImportance,

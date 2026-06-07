@@ -43,6 +43,16 @@ class StockService:
             .all()
         )
 
+    def get_stock_daily_history(self, stock_code: str, limit: int = 120) -> list:
+        """获取股票日K线历史数据（用于绘制K线图）"""
+        return (
+            self.db.query(StockDaily)
+            .filter(StockDaily.stock_code == stock_code)
+            .order_by(StockDaily.trade_date.asc())
+            .limit(limit)
+            .all()
+        )
+
     def get_stock_detail(self, stock_code: str) -> dict:
         """获取股票详情"""
         basic = self.get_stock_basic(stock_code)

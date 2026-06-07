@@ -45,8 +45,10 @@ export interface StockDaily {
   high: number | null;
   low: number | null;
   close: number | null;
+  pre_close: number | null;
   volume: number | null;
   amount: number | null;
+  pct_chg: number | null;
   turnover_rate: number | null;
   pe_ttm: number | null;
   pb: number | null;
