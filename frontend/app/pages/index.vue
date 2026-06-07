@@ -14,35 +14,53 @@
           <div class="market-grid">
             <div class="market-item">
               <div class="label">上证指数</div>
-              <div class="value">{{ marketOverview.market_index?.sh_index ?? "--" }}</div>
+              <div class="value" :class="changeColor(marketOverview.market_index?.sh_change)">{{ formatNumber(marketOverview.market_index?.sh_index) }}</div>
+              <div class="change" :class="changeColor(marketOverview.market_index?.sh_change)">
+                {{ formatChangePercent(marketOverview.market_index?.sh_change) }}
+              </div>
             </div>
             <div class="market-item">
               <div class="label">深证成指</div>
-              <div class="value">{{ marketOverview.market_index?.sz_index ?? "--" }}</div>
+              <div class="value" :class="changeColor(marketOverview.market_index?.sz_change)">{{ formatNumber(marketOverview.market_index?.sz_index) }}</div>
+              <div class="change" :class="changeColor(marketOverview.market_index?.sz_change)">
+                {{ formatChangePercent(marketOverview.market_index?.sz_change) }}
+              </div>
             </div>
             <div class="market-item">
               <div class="label">创业板指</div>
-              <div class="value">{{ marketOverview.market_index?.cyb_index ?? "--" }}</div>
+              <div class="value" :class="changeColor(marketOverview.market_index?.cyb_change)">{{ formatNumber(marketOverview.market_index?.cyb_index) }}</div>
+              <div class="change" :class="changeColor(marketOverview.market_index?.cyb_change)">
+                {{ formatChangePercent(marketOverview.market_index?.cyb_change) }}
+              </div>
             </div>
             <div class="market-item">
               <div class="label">沪深300</div>
-              <div class="value">{{ marketOverview.market_index?.hs300_index ?? "--" }}</div>
+              <div class="value" :class="changeColor(marketOverview.market_index?.hs300_change)">{{ formatNumber(marketOverview.market_index?.hs300_index) }}</div>
+              <div class="change" :class="changeColor(marketOverview.market_index?.hs300_change)">
+                {{ formatChangePercent(marketOverview.market_index?.hs300_change) }}
+              </div>
             </div>
             <div class="market-item">
               <div class="label">中证500</div>
-              <div class="value">{{ marketOverview.market_index?.zz500_index ?? "--" }}</div>
+              <div class="value" :class="changeColor(marketOverview.market_index?.zz500_change)">{{ formatNumber(marketOverview.market_index?.zz500_index) }}</div>
+              <div class="change" :class="changeColor(marketOverview.market_index?.zz500_change)">
+                {{ formatChangePercent(marketOverview.market_index?.zz500_change) }}
+              </div>
             </div>
             <div class="market-item">
               <div class="label">科创50</div>
-              <div class="value">{{ marketOverview.market_index?.kc50_index ?? "--" }}</div>
+              <div class="value" :class="changeColor(marketOverview.market_index?.kc50_change)">{{ formatNumber(marketOverview.market_index?.kc50_index) }}</div>
+              <div class="change" :class="changeColor(marketOverview.market_index?.kc50_change)">
+                {{ formatChangePercent(marketOverview.market_index?.kc50_change) }}
+              </div>
             </div>
             <div class="market-item">
               <div class="label">上涨家数</div>
-              <div class="value">{{ marketOverview.market_stats?.up_count ?? "--" }}</div>
+              <div class="value up">{{ marketOverview.market_stats?.up_count ?? "--" }}</div>
             </div>
             <div class="market-item">
               <div class="label">下跌家数</div>
-              <div class="value">{{ marketOverview.market_stats?.down_count ?? "--" }}</div>
+              <div class="value down">{{ marketOverview.market_stats?.down_count ?? "--" }}</div>
             </div>
           </div>
         </el-card>
@@ -146,6 +164,33 @@ onMounted(async () => {
 function goToStock(code: string) {
   router.push(`/stock/${code}`);
 }
+
+/** 格式化数字（保留2位小数） */
+function formatNumber(val: number | null | undefined): string {
+  if (val == null) return "--";
+  return val.toFixed(2);
+}
+
+/** 根据涨跌幅返回颜色类名：上涨绿色，下跌红色，平盘灰色 */
+function changeColor(val: number | null | undefined): string {
+  if (val == null) return "";
+  if (val > 0) return "up";
+  if (val < 0) return "down";
+  return "";
+}
+
+/** 格式化涨跌值 */
+function formatChange(val: number | null | undefined): string {
+  if (val == null) return "--";
+  return val > 0 ? `+${val.toFixed(2)}` : val.toFixed(2);
+}
+
+/** 格式化涨跌幅百分比（字段已是百分比值，如 -0.74 表示 -0.74%） */
+function formatChangePercent(change: number | null | undefined): string {
+  if (change == null) return "--";
+  const prefix = change > 0 ? "+" : "";
+  return `${prefix}${change.toFixed(2)}%`;
+}
 </script>
 
 <style scoped>
@@ -168,7 +213,7 @@ function goToStock(code: string) {
 
 .market-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(8, 1fr);
   gap: 20px;
   text-align: center;
 }
@@ -189,5 +234,21 @@ function goToStock(code: string) {
   font-size: 24px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+
+.market-item .value.up,
+.market-item .change.up {
+  color: #4caf50;
+}
+
+.market-item .value.down,
+.market-item .change.down {
+  color: #f44336;
+}
+
+.market-item .change {
+  font-size: 13px;
+  margin-top: 4px;
+  font-weight: 500;
 }
 </style>
