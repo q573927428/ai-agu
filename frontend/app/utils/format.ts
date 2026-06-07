@@ -54,3 +54,11 @@ export function formatChange(value: number | null | undefined): string {
   const prefix = value > 0 ? "+" : "";
   return `${prefix}${value.toFixed(2)}%`;
 }
+
+/**
+ * 格式化为置信度百分比（保留1位小数）
+ */
+export function formatConfidence(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "--";
+  return `${(value * 100).toFixed(1)}%`;
+}

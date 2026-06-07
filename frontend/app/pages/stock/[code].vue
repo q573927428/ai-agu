@@ -48,7 +48,7 @@
             </span>
           </el-descriptions-item>
           <el-descriptions-item label="置信度">
-            {{ stockPrediction.confidence != null ? (stockPrediction.confidence * 100).toFixed(1) + "%" : "--" }}
+            {{ formatConfidence(stockPrediction.confidence) }}
           </el-descriptions-item>
         </el-descriptions>
       </el-card>
@@ -60,7 +60,7 @@
 import { ref, onMounted, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useApi } from "~/composables/useApi";
-import { formatPercent } from "~/utils/format";
+import { formatPercent, formatConfidence } from "~/utils/format";
 import type { StockBasic, StockDaily, StockPrediction } from "~/types/api";
 
 const route = useRoute();
@@ -72,7 +72,7 @@ const stockBasic = ref<StockBasic | null>(null);
 const stockDaily = ref<StockDaily | null>(null);
 const stockPrediction = ref<StockPrediction | null>(null);
 
-const stockCode = computed(() => route.params.code as string);
+const stockCode = computed(() => (route as any).params.code as string);
 
 const marketTagType = computed(() => {
   if (stockBasic.value?.market === "SH") return "danger";
