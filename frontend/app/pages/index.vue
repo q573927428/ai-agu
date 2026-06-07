@@ -97,6 +97,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
 import { useRouter } from "vue-router";
+import dayjs from "dayjs";
 import { useApi } from "~/composables/useApi";
 import type { RankingItem, MarketOverview } from "~/types/api";
 
@@ -120,7 +121,7 @@ const marketOverview = ref<MarketOverview>({
 const modelStatus = computed(() => marketOverview.value.model_status);
 
 const marketDate = computed(() => {
-  return new Date().toLocaleDateString("zh-CN");
+  return dayjs().locale("zh-cn").format("YYYY年M月D日");
 });
 
 onMounted(async () => {

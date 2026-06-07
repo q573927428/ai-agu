@@ -22,6 +22,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
+import dayjs from "dayjs";
 import { useApi } from "~/composables/useApi";
 import type { RankingItem } from "~/types/api";
 
@@ -38,7 +39,7 @@ onMounted(() => {
 
 async function loadData() {
   loading.value = true;
-  const dateStr = selectedDate.value ? new Date(selectedDate.value).toISOString().split("T")[0] : undefined;
+  const dateStr = selectedDate.value ? dayjs(selectedDate.value).format("YYYY-MM-DD") : undefined;
   const result = await fetchRankings(dateStr);
   if (result.data?.rankings) {
     rankings.value = result.data.rankings;
@@ -58,7 +59,7 @@ function handleDateChange() {
 }
 
 function disabledDate(time: Date) {
-  return time > new Date();
+  return time > dayjs().toDate();
 }
 
 function goToStock(code: string) {

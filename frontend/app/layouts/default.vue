@@ -41,6 +41,7 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { useRoute } from "vue-router";
+import dayjs from "dayjs";
 import { Expand, Fold } from "@element-plus/icons-vue";
 
 const route = useRoute();
@@ -59,10 +60,10 @@ const currentTitle = computed(() => {
 
 // 判断是否在交易时间（9:30-15:00 周一至周五）
 const isMarketOpen = computed(() => {
-  const now = new Date();
-  const day = now.getDay();
-  const hour = now.getHours();
-  const minute = now.getMinutes();
+  const now = dayjs();
+  const day = now.day();
+  const hour = now.hour();
+  const minute = now.minute();
   const time = hour * 100 + minute;
   return day >= 1 && day <= 5 && time >= 930 && time <= 1500;
 });
