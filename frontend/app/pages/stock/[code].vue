@@ -1,11 +1,11 @@
 <template>
   <div class="stock-detail">
     <div class="page-header">
-      <el-button :icon="ArrowLeft" @click="goBack" text>返回</el-button>
       <h1 class="page-title" v-if="stockBasic">
         {{ stockBasic.stock_name }} ({{ stockBasic.stock_code }})
         <el-tag size="small" :type="marketTagType" class="market-tag">{{ stockBasic.market }}</el-tag>
       </h1>
+      <el-button :icon="ArrowLeft" @click="goBack" text>返回</el-button>
     </div>
 
     <el-skeleton :loading="loading" animated :rows="10">
