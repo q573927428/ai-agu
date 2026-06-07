@@ -1,10 +1,11 @@
-"""因子计算引擎"""
+"""因子计算引擎 - 优化版：批量查询消除N+1"""
 import pandas as pd
 import numpy as np
-from typing import Optional
+from typing import Optional, List, Dict
 from datetime import datetime, timedelta
 from loguru import logger
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from app.models.factor import FactorStore
 from app.models.stock_daily import StockDaily
 from app.models.macro import MacroData
@@ -166,29 +167,24 @@ class FactorEngine:
 
         # M07: 市场20日宽度指标
         if current_pct_chgs:
-            # 创新高比例: 涨幅>3%的占比
-           n_high = sum(1 for c in current_pct_chgs if c > 3)
-           n_low = sum(1 for c in current_pct_chgs if c < -3)
-           n_total = len(current_pct_chgs)
-           breadth_20d = float((n_high - n_low) / n_total) if n_total > 0 else 0
+            n_high = sum(1 for c in current_pct_chgs if c > 3)
+            n_low = sum(1 for c in current_pct_chgs if c < -3)
+            n_total = len(current_pct_chgs)
+            breadth_20d = float((n_high - n_low) / n_total) if n_total > 0 else 0
         else:
             breadth_20d = 0
 
         # M08: 市场恐慌指数代理（个股涨跌幅横截面标准差/均值）
-        if current_pct_chgs:
-            vix_proxy = float(np.std(current_pct_chgs))
-        else:
-            vix_proxy = 0
+        vix_proxy = float(np.std(current_pct_chgs)) if current_pct_chgs else 0
 
         # M09: 市场风格动量因子（大市值股票相对表现）
         if current_records:
-            # 按收盘价排序作为市值代理，高价股 vs 低价股
             closes_sorted = sorted([float(r.close) for r in current_records if r.close], reverse=True)
             if len(closes_sorted) >= 20:
                 top10_returns = np.mean([float(r.pct_chg or 0) for r in current_records
                                          if r.close and float(r.close) >= closes_sorted[len(closes_sorted)//10]])
                 bottom10_returns = np.mean([float(r.pct_chg or 0) for r in current_records
-                                            if r.close and float(r.close) <= closes_sorted[-len(closes_sorted)//10]])
+                                             if r.close and float(r.close) <= closes_sorted[-len(closes_sorted)//10]])
                 style_momentum = float(top10_returns - bottom10_returns) if bottom10_returns != 0 else 0
             else:
                 style_momentum = 0
@@ -213,13 +209,17 @@ class FactorEngine:
 
     # ==================== 行业因子 ====================
 
-    def compute_industry_factors(self, trade_date: str) -> dict:
-        """计算行业因子 - 按行业分组计算"""
+    def compute_industry_factors(self, trade_date: str, stock_codes: list = None) -> dict:
+        """计算行业因子 - 按行业分组计算（批量优化版）
+
+        Args:
+            trade_date: 交易日期
+            stock_codes: 限制计算的股票列表（不传则计算全部）
+        """
         from app.utils.date_utils import get_previous_n_trade_days
 
         trade_date_dt = datetime.strptime(trade_date, "%Y-%m-%d")
         past_dates_20 = get_previous_n_trade_days(trade_date_dt, 20)
-        past_dates_5 = get_previous_n_trade_days(trade_date_dt, 5)
 
         # 获取所有股票及其行业
         stocks = self.db.query(StockBasic.stock_code, StockBasic.industry).all()
@@ -231,11 +231,23 @@ class FactorEngine:
         if not stock_industry:
             return {}
 
-        # 获取当日行情
+        # 如果传入了 stock_codes，只处理这些股票的行业
+        if stock_codes:
+            target_set = set(stock_codes)
+            stock_industry = {k: v for k, v in stock_industry.items() if k in target_set}
+
+        all_stock_codes = list(stock_industry.keys())
+        if not all_stock_codes:
+            return {}
+
+        # 获取当日行情（只查需要的股票）
         current_quotes = (
             self.db.query(StockDaily.stock_code, StockDaily.close, StockDaily.pct_chg,
                           StockDaily.amount, StockDaily.volume)
-            .filter(StockDaily.trade_date == trade_date_dt.date())
+            .filter(
+                StockDaily.trade_date == trade_date_dt.date(),
+                StockDaily.stock_code.in_(all_stock_codes),
+            )
             .all()
         )
 
@@ -243,18 +255,47 @@ class FactorEngine:
         for q in current_quotes:
             current_by_code[q.stock_code] = q
 
-        # 获取历史行情
+        # 获取历史行情（20日）
         hist_quotes_20 = (
             self.db.query(StockDaily.stock_code, StockDaily.trade_date, StockDaily.close, StockDaily.pct_chg)
-            .filter(StockDaily.trade_date.in_([d.date() for d in past_dates_20]))
+            .filter(
+                StockDaily.stock_code.in_(all_stock_codes),
+                StockDaily.trade_date.in_([d.date() for d in past_dates_20]),
+            )
             .all()
         )
 
-        hist_quotes_5 = (
-            self.db.query(StockDaily.stock_code, StockDaily.trade_date, StockDaily.close, StockDaily.pct_chg)
-            .filter(StockDaily.trade_date.in_([d.date() for d in past_dates_5]))
+        # 【优化】预分组历史数据，避免O(N²)遍历
+        hist_grouped: Dict[str, Dict] = {}
+        for h in hist_quotes_20:
+            if h.stock_code not in hist_grouped:
+                hist_grouped[h.stock_code] = {}
+            hist_grouped[h.stock_code][h.trade_date] = h
+
+        # 【批量优化】一次性查询所有股票的最新财务指标
+        latest_end_date_subq = (
+            self.db.query(
+                FinaIndicator.stock_code,
+                func.max(FinaIndicator.end_date).label('max_end_date')
+            )
+            .filter(FinaIndicator.stock_code.in_(all_stock_codes))
+            .group_by(FinaIndicator.stock_code)
+            .subquery()
+        )
+
+        all_fina = (
+            self.db.query(FinaIndicator)
+            .join(
+                latest_end_date_subq,
+                (FinaIndicator.stock_code == latest_end_date_subq.c.stock_code) &
+                (FinaIndicator.end_date == latest_end_date_subq.c.max_end_date)
+            )
             .all()
         )
+
+        fina_by_code = {}
+        for f in all_fina:
+            fina_by_code[f.stock_code] = f
 
         # 按行业分组汇总
         industry_data = {}
@@ -265,12 +306,12 @@ class FactorEngine:
                     "current_pct_chgs": [],
                     "current_amounts": [],
                     "hist_20d_returns": [],
-                    "hist_5d_closes": [],
-                    "hist_20d_closes": [],
+                    "pe_vals": [],
+                    "pb_vals": [],
+                    "roe_vals": [],
                 }
             industry_data[ind]["codes"].append(code)
 
-            # 当日数据
             if code in current_by_code:
                 q = current_by_code[code]
                 if q.pct_chg is not None:
@@ -278,20 +319,31 @@ class FactorEngine:
                 if q.amount:
                     industry_data[ind]["current_amounts"].append(float(q.amount))
 
-            # 历史数据 - 20日收益
-            code_hist_20 = {h.trade_date: h for h in hist_quotes_20 if h.stock_code == code}
-            dates_20 = sorted(code_hist_20.keys())
+            # 历史20日收益率（直接查预分组字典，O(1)）
+            code_hist = hist_grouped.get(code, {})
+            dates_20 = sorted(code_hist.keys())
             if len(dates_20) >= 2:
-                first_close = float(code_hist_20[dates_20[0]].close or 0)
-                last_close = float(code_hist_20[dates_20[-1]].close or 0)
+                first_close = float(code_hist[dates_20[0]].close or 0)
+                last_close = float(code_hist[dates_20[-1]].close or 0)
                 if first_close > 0:
                     industry_data[ind]["hist_20d_returns"].append(last_close / first_close - 1)
 
-            # 历史数据用于计算波动率
-            for h in hist_quotes_20:
-                if h.stock_code == code:
-                    if h.trade_date in [d.date() for d in past_dates_20]:
-                        pass
+            # 财务数据（批量已经查好）
+            fina = fina_by_code.get(code)
+            if fina and fina.eps and float(fina.eps) > 0 and code in current_by_code:
+                if current_by_code[code].close:
+                    pe = float(current_by_code[code].close) / float(fina.eps)
+                    if 0 < pe < 1000:
+                        industry_data[ind]["pe_vals"].append(pe)
+
+            if fina and fina.bps and float(fina.bps) > 0 and code in current_by_code:
+                if current_by_code[code].close:
+                    pb = float(current_by_code[code].close) / float(fina.bps)
+                    if 0 < pb < 100:
+                        industry_data[ind]["pb_vals"].append(pb)
+
+            if fina and fina.roe is not None:
+                industry_data[ind]["roe_vals"].append(float(fina.roe))
 
         # 计算各行业因子
         industry_factors = {}
@@ -299,73 +351,22 @@ class FactorEngine:
             pct_chgs = data["current_pct_chgs"]
             returns_20d = data["hist_20d_returns"]
 
-            # I01: 行业5日收益率（等权平均）
             return_5d = float(np.mean(pct_chgs)) if pct_chgs else 0
-
-            # I02: 行业20日收益率
             return_20d = float(np.mean(returns_20d)) if returns_20d else 0
-
-            # I03: 行业收益波动率
             vol = float(np.std(returns_20d)) if len(returns_20d) >= 2 else 0
 
-            # I04: 行业PE历史百分位
-            # 从FinaIndicator取各股最新PE(股价/eps)，取行业中位数，再对该值做min-max归一化
-            pe_vals = []
-            for code in data["codes"]:
-                fina = (
-                    self.db.query(FinaIndicator.eps, FinaIndicator.bps)
-                    .filter(FinaIndicator.stock_code == code)
-                    .order_by(FinaIndicator.end_date.desc())
-                    .first()
-                )
-                if fina and fina.eps and fina.eps > 0 and code in current_by_code:
-                    if current_by_code[code].close:
-                        pe = float(current_by_code[code].close) / float(fina.eps)
-                        if 0 < pe < 1000:  # 过滤异常值
-                            pe_vals.append(pe)
-            pe_percentile = float(np.median(pe_vals) / 50) if pe_vals else 0.5  # 除以50粗略归一化到0~1
+            pe_vals = data["pe_vals"]
+            pe_percentile = float(np.median(pe_vals) / 50) if pe_vals else 0.5
             pe_percentile = min(max(pe_percentile, 0), 1)
 
-            # I05: 行业PB历史百分位
-            pb_vals = []
-            for code in data["codes"]:
-                fina = (
-                    self.db.query(FinaIndicator.bps)
-                    .filter(FinaIndicator.stock_code == code)
-                    .order_by(FinaIndicator.end_date.desc())
-                    .first()
-                )
-                if fina and fina.bps and fina.bps > 0 and code in current_by_code:
-                    if current_by_code[code].close:
-                        pb = float(current_by_code[code].close) / float(fina.bps)
-                        if 0 < pb < 100:
-                            pb_vals.append(pb)
+            pb_vals = data["pb_vals"]
             pb_percentile = float(np.median(pb_vals) / 10) if pb_vals else 0.5
             pb_percentile = min(max(pb_percentile, 0), 1)
 
-            # I06: 行业ROE中位数
-            roe_values = []
-            for code in data["codes"]:
-                fina = (
-                    self.db.query(FinaIndicator.roe)
-                    .filter(FinaIndicator.stock_code == code)
-                    .order_by(FinaIndicator.end_date.desc())
-                    .first()
-                )
-                if fina and fina.roe is not None:
-                    roe_values.append(float(fina.roe))
-            roe_median = float(np.median(roe_values)) if roe_values else 0
+            roe_median = float(np.median(data["roe_vals"])) if data["roe_vals"] else 0
 
-            # I07: 行业动量排名 - 使用20日收益率排序（后续整体排名）
-            momentum_rank = 0.5  # 先占位，下面统一计算
-
-            # I08: 行业反转信号
             reversal_signal = -return_5d
-
-            # I09: 行业资金净流入
             fund_flow = float(np.sum(data["current_amounts"])) if data["current_amounts"] else 0
-
-            # I10: 行业离散度
             dispersion = float(np.std(pct_chgs)) if len(pct_chgs) >= 2 else 0
 
             industry_factors[ind] = {
@@ -375,13 +376,13 @@ class FactorEngine:
                 "industry_pe_percentile": pe_percentile,
                 "industry_pb_percentile": pb_percentile,
                 "industry_roe_median": roe_median,
-                "industry_momentum_rank": momentum_rank,
+                "industry_momentum_rank": 0.5,  # 占位，下面统一计算
                 "industry_reversal_signal": reversal_signal,
                 "industry_fund_flow": fund_flow,
                 "industry_dispersion": dispersion,
             }
 
-        # 统一计算行业动量排名百分位（基于20日收益率排序）
+        # 统一计算行业动量排名百分位
         all_returns_20d = [(ind, data["industry_return_20d"]) for ind, data in industry_factors.items()]
         all_returns_20d.sort(key=lambda x: x[1])
         total_inds = len(all_returns_20d)
@@ -390,49 +391,121 @@ class FactorEngine:
 
         return industry_factors
 
-    # ==================== 个股因子 ====================
+    # ==================== 个股因子（批量版） ====================
 
-    def _get_latest_financial(self, stock_code: str) -> dict:
-        """获取最新一期财务指标数据"""
-        result = {"roe": None, "roa": None, "gross_margin": None,
-                  "revenue_yoy": None, "net_profit_yoy": None, "debt_ratio": None,
-                  "eps": None, "bps": None}
-
-        fina = (
-            self.db.query(FinaIndicator)
-            .filter(FinaIndicator.stock_code == stock_code)
-            .order_by(FinaIndicator.end_date.desc())
-            .first()
-        )
-        if fina:
-            result["roe"] = float(fina.roe) if fina.roe is not None else None
-            result["roa"] = float(fina.roa) if fina.roa is not None else None
-            result["gross_margin"] = float(fina.gross_margin) if fina.gross_margin is not None else None
-            result["revenue_yoy"] = float(fina.revenue_yoy) if fina.revenue_yoy is not None else None
-            result["net_profit_yoy"] = float(fina.net_profit_yoy) if fina.net_profit_yoy is not None else None
-            result["debt_ratio"] = float(fina.debt_ratio) if fina.debt_ratio is not None else None
-            result["eps"] = float(fina.eps) if fina.eps is not None else None
-            result["bps"] = float(fina.bps) if fina.bps is not None else None
-
-        return result
-
-    def compute_stock_factors(self, stock_code: str, trade_date: str) -> dict:
-        """计算个股因子"""
+    def _batch_load_historical_data(self, stock_codes: List[str], trade_date: str, days: int = 60) -> Dict[str, List]:
+        """批量加载股票历史行情数据"""
         from app.utils.date_utils import get_previous_n_trade_days
-
         trade_date_dt = datetime.strptime(trade_date, "%Y-%m-%d")
-        past_dates = get_previous_n_trade_days(trade_date_dt, 60)
+        past_dates = get_previous_n_trade_days(trade_date_dt, days)
 
-        # 获取历史行情
-        daily_records = (
+        records = (
             self.db.query(StockDaily)
             .filter(
-                StockDaily.stock_code == stock_code,
+                StockDaily.stock_code.in_(stock_codes),
                 StockDaily.trade_date.in_([d.date() for d in past_dates]),
             )
-            .order_by(StockDaily.trade_date.asc())
+            .order_by(StockDaily.stock_code, StockDaily.trade_date.asc())
             .all()
         )
+
+        hist_data: Dict[str, List] = {}
+        for r in records:
+            code = r.stock_code
+            if code not in hist_data:
+                hist_data[code] = []
+            hist_data[code].append(r)
+
+        return hist_data
+
+    def _batch_load_latest_fina(self, stock_codes: List[str]) -> Dict[str, FinaIndicator]:
+        """批量加载每只股票的最新财务指标"""
+        if not stock_codes:
+            return {}
+
+        latest_subq = (
+            self.db.query(
+                FinaIndicator.stock_code,
+                func.max(FinaIndicator.end_date).label('max_end_date')
+            )
+            .filter(FinaIndicator.stock_code.in_(stock_codes))
+            .group_by(FinaIndicator.stock_code)
+            .subquery()
+        )
+
+        records = (
+            self.db.query(FinaIndicator)
+            .join(
+                latest_subq,
+                (FinaIndicator.stock_code == latest_subq.c.stock_code) &
+                (FinaIndicator.end_date == latest_subq.c.max_end_date)
+            )
+            .all()
+        )
+
+        return {r.stock_code: r for r in records}
+
+    def _batch_load_latest_balancesheet(self, stock_codes: List[str]) -> Dict[str, Balancesheet]:
+        """批量加载每只股票的最新资产负债表"""
+        if not stock_codes:
+            return {}
+
+        latest_subq = (
+            self.db.query(
+                Balancesheet.stock_code,
+                func.max(Balancesheet.end_date).label('max_end_date')
+            )
+            .filter(Balancesheet.stock_code.in_(stock_codes))
+            .group_by(Balancesheet.stock_code)
+            .subquery()
+        )
+
+        records = (
+            self.db.query(Balancesheet)
+            .join(
+                latest_subq,
+                (Balancesheet.stock_code == latest_subq.c.stock_code) &
+                (Balancesheet.end_date == latest_subq.c.max_end_date)
+            )
+            .all()
+        )
+
+        return {r.stock_code: r for r in records}
+
+    def compute_stock_factors(self, stock_code: str, trade_date: str) -> dict:
+        """个股因子计算（单只股票版，兼容旧调用）"""
+        return self._compute_stock_factors_from_data(
+            stock_code=stock_code,
+            trade_date=trade_date,
+            daily_records=None,
+            fina=None,
+            bs=None,
+        )
+
+    def _compute_stock_factors_from_data(
+        self,
+        stock_code: str,
+        trade_date: str,
+        daily_records: Optional[List] = None,
+        fina: Optional[FinaIndicator] = None,
+        bs: Optional[Balancesheet] = None,
+    ) -> dict:
+        """从已加载的数据计算单只股票因子"""
+        from app.utils.date_utils import get_previous_n_trade_days
+
+        if daily_records is None:
+            # 兜底：如果没传数据，按原方式查
+            trade_date_dt = datetime.strptime(trade_date, "%Y-%m-%d")
+            past_dates = get_previous_n_trade_days(trade_date_dt, 60)
+            daily_records = (
+                self.db.query(StockDaily)
+                .filter(
+                    StockDaily.stock_code == stock_code,
+                    StockDaily.trade_date.in_([d.date() for d in past_dates]),
+                )
+                .order_by(StockDaily.trade_date.asc())
+                .all()
+            )
 
         if len(daily_records) < 5:
             return {}
@@ -448,11 +521,16 @@ class FactorEngine:
         closes_arr = np.array(closes)
         returns = np.diff(closes_arr) / closes_arr[:-1]
 
-        # 获取最新一日数据
         latest = daily_records[-1]
 
-        # 获取最新财务数据
-        fina = self._get_latest_financial(stock_code)
+        # 读取财务数据
+        if fina is None:
+            fina = (
+                self.db.query(FinaIndicator)
+                .filter(FinaIndicator.stock_code == stock_code)
+                .order_by(FinaIndicator.end_date.desc())
+                .first()
+            )
 
         factors = {}
 
@@ -473,74 +551,80 @@ class FactorEngine:
         # S07: 换手率
         factors["stock_turnover_rate_5d"] = float(np.mean(turnovers[-5:])) if len(turnovers) >= 5 else 0
 
-        # S08: PE-TTM (使用最新财报EPS)
-        if fina["eps"] and fina["eps"] > 0 and latest.close:
-            factors["stock_pe_ttm"] = float(float(latest.close) / fina["eps"])
+        # S08: PE-TTM
+        eps_val = float(fina.eps) if fina and fina.eps and float(fina.eps) > 0 else 0
+        close_val = float(latest.close) if latest.close else 0
+        if eps_val > 0 and close_val > 0:
+            factors["stock_pe_ttm"] = float(close_val / eps_val)
         else:
             factors["stock_pe_ttm"] = 0
 
-        # S09: PB (使用最新财报BPS)
-        if fina["bps"] and fina["bps"] > 0 and latest.close:
-            factors["stock_pb"] = float(float(latest.close) / fina["bps"])
+        # S09: PB
+        bps_val = float(fina.bps) if fina and fina.bps and float(fina.bps) > 0 else 0
+        if bps_val > 0 and close_val > 0:
+            factors["stock_pb"] = float(close_val / bps_val)
         else:
             factors["stock_pb"] = 0
 
-        # S10: PS-TTM (简化：close / revenue_per_share, 暂为0因缺营收数据)
+        # S10: PS-TTM
         factors["stock_ps_ttm"] = 0
 
-        # S11: ROE-TTM
-        factors["stock_roe_ttm"] = fina["roe"] if fina["roe"] is not None else 0
+        # S11: ROE
+        factors["stock_roe_ttm"] = float(fina.roe) if fina and fina.roe is not None else 0
 
-        # S12: ROA-TTM
-        factors["stock_roa_ttm"] = fina["roa"] if fina["roa"] is not None else 0
+        # S12: ROA
+        factors["stock_roa_ttm"] = float(fina.roa) if fina and fina.roa is not None else 0
 
         # S13: 营收同比增速
-        factors["stock_revenue_yoy"] = fina["revenue_yoy"] if fina["revenue_yoy"] is not None else 0
+        factors["stock_revenue_yoy"] = float(fina.revenue_yoy) if fina and fina.revenue_yoy is not None else 0
 
         # S14: 净利润同比增速
-        factors["stock_profit_yoy"] = fina["net_profit_yoy"] if fina["net_profit_yoy"] is not None else 0
+        factors["stock_profit_yoy"] = float(fina.net_profit_yoy) if fina and fina.net_profit_yoy is not None else 0
 
         # S15: 毛利率
-        factors["stock_gross_margin"] = fina["gross_margin"] if fina["gross_margin"] is not None else 0
+        factors["stock_gross_margin"] = float(fina.gross_margin) if fina and fina.gross_margin is not None else 0
 
         # S16: 资产负债率
-        factors["stock_debt_ratio"] = fina["debt_ratio"] if fina["debt_ratio"] is not None else 0
+        factors["stock_debt_ratio"] = float(fina.debt_ratio) if fina and fina.debt_ratio is not None else 0
 
-        # S17: 20日动量（剔除最近1日）
+        # S17: 20日动量
         factors["stock_momentum_20d"] = float(closes_arr[-2] / closes_arr[-min(21, len(closes_arr))] - 1) if len(closes_arr) >= 21 else 0
 
         # S18: 5日反转
         factors["stock_reversal_5d"] = -factors["stock_return_5d"]
 
-        # S19: 规模因子（对数总市值）
-        # 从最近资产负债表获取股本，再乘以收盘价
-        bs = (
-            self.db.query(Balancesheet.cap_stk)
-            .filter(Balancesheet.stock_code == stock_code)
-            .order_by(Balancesheet.end_date.desc())
-            .first()
-        )
-        if bs and bs.cap_stk and latest.close:
-            # cap_stk是股本(元)，面值1元/股，所以股份数=cap_stk/1
+        # S19: 规模因子
+        if bs is None:
+            bs = (
+                self.db.query(Balancesheet)
+                .filter(Balancesheet.stock_code == stock_code)
+                .order_by(Balancesheet.end_date.desc())
+                .first()
+            )
+        if bs and bs.cap_stk and close_val > 0:
             total_shares = float(bs.cap_stk)
-            market_cap = float(latest.close) * total_shares
+            market_cap = close_val * total_shares
             factors["stock_size_factor"] = float(np.log(market_cap)) if market_cap > 0 else 0
         else:
             factors["stock_size_factor"] = 0
 
         # S20: 非流动性
         if len(returns) >= 20 and len(amounts) >= 20:
-            illiq = np.mean(np.abs(returns[-20:]) / (np.array(amounts[-20:]) / 1e8))
-            factors["stock_illiquidity"] = float(illiq) if not np.isnan(illiq) and not np.isinf(illiq) else 0
+            amt_arr = np.array(amounts[-20:], dtype=float)
+            ret_arr = np.abs(returns[-20:])
+            with np.errstate(divide='ignore', invalid='ignore'):
+                illiq_vals = ret_arr / (amt_arr / 1e8)
+                illiq_vals = illiq_vals[~np.isinf(illiq_vals) & ~np.isnan(illiq_vals)]
+            factors["stock_illiquidity"] = float(np.mean(illiq_vals)) if len(illiq_vals) > 0 else 0
         else:
             factors["stock_illiquidity"] = 0
 
         return factors
 
-    # ==================== 主入口 ====================
+    # ==================== 主入口（批量优化版） ====================
 
     def compute_all(self, trade_date: str, top_n: int = 0) -> pd.DataFrame:
-        """计算全市场全部因子，输出因子宽表
+        """计算全市场全部因子（批量优化版）
 
         Args:
             trade_date: 交易日期
@@ -555,14 +639,16 @@ class FactorEngine:
 
         stocks = query.all()
 
+        if not stocks:
+            return pd.DataFrame()
+
+        stock_codes = [s[0] for s in stocks]
+
         # 预计算宏观因子（所有股票共享）
         macro_factors = self.compute_macro_factors(trade_date)
-
-        # 预计算市场因子（所有股票共享）
         market_factors = self.compute_market_factors(trade_date)
-
-        # 预计算行业因子
-        industry_factors = self.compute_industry_factors(trade_date)
+        # 只计算这 N 只股票所属的行业因子
+        industry_factors = self.compute_industry_factors(trade_date, stock_codes=stock_codes)
 
         # 获取股票行业映射
         stock_industry_map = {}
@@ -571,14 +657,35 @@ class FactorEngine:
             if ind:
                 stock_industry_map[code] = ind
 
+        # ====== 批量加载数据 ======
+        logger.info(f"批量加载 {len(stock_codes)} 只股票的历史行情数据...")
+        hist_data = self._batch_load_historical_data(stock_codes, trade_date)
+
+        logger.info(f"批量加载 {len(stock_codes)} 只股票的财务数据...")
+        fina_data = self._batch_load_latest_fina(stock_codes)
+
+        logger.info(f"批量加载 {len(stock_codes)} 只股票的资产负债表...")
+        bs_data = self._batch_load_latest_balancesheet(stock_codes)
+        # ==========================
+
         all_factors = []
 
-        for (stock_code,) in stocks:
-            stock_factors = self.compute_stock_factors(stock_code, trade_date)
+        for stock_code in stock_codes:
+            daily_records = hist_data.get(stock_code, [])
+            if len(daily_records) < 5:
+                continue
+
+            stock_factors = self._compute_stock_factors_from_data(
+                stock_code=stock_code,
+                trade_date=trade_date,
+                daily_records=daily_records,
+                fina=fina_data.get(stock_code),
+                bs=bs_data.get(stock_code),
+            )
             if not stock_factors:
                 continue
 
-            # 获取该股票所属行业的因子
+            # 行业因子
             industry = stock_industry_map.get(stock_code, "")
             industry_row = industry_factors.get(industry, {
                 "industry_return_5d": 0, "industry_return_20d": 0,
