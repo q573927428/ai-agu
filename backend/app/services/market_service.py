@@ -26,8 +26,8 @@ class MarketService:
         if not latest_date:
             return self._empty_overview()
 
-        # 1. 获取指数数据（上证指数 000001.SH + 深证成指 399001.SZ）
-        index_ts_codes = ["000001.SH", "399001.SZ"]
+        # 1. 获取指数数据（上证指数 000001.SH + 深证成指 399001.SZ + 扩展指数）
+        index_ts_codes = ["000001.SH", "399001.SZ", "399006.SZ", "000300.SH", "000905.SH", "000688.SH"]
         index_records = (
             self.db.query(IndexDaily)
             .filter(
@@ -40,6 +40,10 @@ class MarketService:
 
         sh = index_map.get("000001.SH")
         sz = index_map.get("399001.SZ")
+        cyb = index_map.get("399006.SZ")  # 创业板指
+        hs300 = index_map.get("000300.SH")  # 沪深300
+        zz500 = index_map.get("000905.SH")  # 中证500
+        kc50 = index_map.get("000688.SH")  # 科创50
 
         # 2. 统计涨跌家数（从 stock_daily 获取全市场个股数据，不含指数）
         stats = self._get_market_stats(latest_date)
@@ -53,6 +57,14 @@ class MarketService:
                 "sh_change": float(sh.pct_chg) if sh else None,
                 "sz_index": float(sz.close) if sz else None,
                 "sz_change": float(sz.pct_chg) if sz else None,
+                "cyb_index": float(cyb.close) if cyb else None,
+                "cyb_change": float(cyb.pct_chg) if cyb else None,
+                "hs300_index": float(hs300.close) if hs300 else None,
+                "hs300_change": float(hs300.pct_chg) if hs300 else None,
+                "zz500_index": float(zz500.close) if zz500 else None,
+                "zz500_change": float(zz500.pct_chg) if zz500 else None,
+                "kc50_index": float(kc50.close) if kc50 else None,
+                "kc50_change": float(kc50.pct_chg) if kc50 else None,
             },
             "market_stats": stats,
             "top_industries": [],
@@ -139,6 +151,14 @@ class MarketService:
                 "sh_change": None,
                 "sz_index": None,
                 "sz_change": None,
+                "cyb_index": None,
+                "cyb_change": None,
+                "hs300_index": None,
+                "hs300_change": None,
+                "zz500_index": None,
+                "zz500_change": None,
+                "kc50_index": None,
+                "kc50_change": None,
             },
             "market_stats": {
                 "up_count": 0,

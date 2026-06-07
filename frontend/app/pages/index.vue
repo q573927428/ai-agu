@@ -22,6 +22,22 @@
               <div class="value">{{ marketOverview.market_index?.sz_index ?? "--" }}</div>
             </div>
             <div class="market-item">
+              <div class="label">创业板指</div>
+              <div class="value">{{ marketOverview.market_index?.cyb_index ?? "--" }}</div>
+            </div>
+            <div class="market-item">
+              <div class="label">沪深300</div>
+              <div class="value">{{ marketOverview.market_index?.hs300_index ?? "--" }}</div>
+            </div>
+            <div class="market-item">
+              <div class="label">中证500</div>
+              <div class="value">{{ marketOverview.market_index?.zz500_index ?? "--" }}</div>
+            </div>
+            <div class="market-item">
+              <div class="label">科创50</div>
+              <div class="value">{{ marketOverview.market_index?.kc50_index ?? "--" }}</div>
+            </div>
+            <div class="market-item">
               <div class="label">上涨家数</div>
               <div class="value">{{ marketOverview.market_stats?.up_count ?? "--" }}</div>
             </div>
@@ -90,7 +106,7 @@ const { fetchRankings, fetchMarketOverview } = useApi();
 const loading = ref(true);
 const topRankings = ref<RankingItem[]>([]);
 const marketOverview = ref<MarketOverview>({
-  market_index: { sh_index: 0, sh_change: 0, sz_index: 0, sz_change: 0 },
+  market_index: { sh_index: 0, sh_change: 0, sz_index: 0, sz_change: 0, cyb_index: null, cyb_change: null, hs300_index: null, hs300_change: null, zz500_index: null, zz500_change: null, kc50_index: null, kc50_change: null },
   market_stats: { up_count: 0, down_count: 0, flat_count: 0, advance_decline_ratio: 0 },
   top_industries: [],
   model_status: {

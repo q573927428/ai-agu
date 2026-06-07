@@ -87,6 +87,14 @@ export interface MarketOverview {
     sh_change: number;
     sz_index: number;
     sz_change: number;
+    cyb_index: number | null;
+    cyb_change: number | null;
+    hs300_index: number | null;
+    hs300_change: number | null;
+    zz500_index: number | null;
+    zz500_change: number | null;
+    kc50_index: number | null;
+    kc50_change: number | null;
   };
   market_stats: {
     up_count: number;
