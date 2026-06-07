@@ -14,14 +14,22 @@
         <el-link type="primary" :underline="false">{{ row.stock_name }}</el-link>
       </template>
     </el-table-column>
-    <el-table-column prop="predicted_return" label="预测收益率" width="140" align="right">
+    <el-table-column prop="predicted_return" label="预测20日收益率" width="140" align="right">
       <template #default="{ row }">
         <span :style="{ color: getReturnColor(row.predicted_return) }">
           {{ formatPercent(row.predicted_return) }}
         </span>
       </template>
     </el-table-column>
-    <el-table-column prop="confidence" label="置信度" width="120" align="right">
+    <el-table-column prop="predicted_return_1d" label="预测次日收益率" width="140" align="right">
+      <template #default="{ row }">
+        <span v-if="row.predicted_return_1d != null" :style="{ color: getReturnColor(row.predicted_return_1d) }">
+          {{ formatPercent(row.predicted_return_1d) }}
+        </span>
+        <span v-else>--</span>
+      </template>
+    </el-table-column>
+    <el-table-column prop="confidence" label="置信度(20日)" width="120" align="right">
       <template #default="{ row }">
         <span v-if="row.confidence != null">{{ formatPercent(row.confidence) }}</span>
         <span v-else>--</span>

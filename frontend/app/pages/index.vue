@@ -73,7 +73,7 @@
         <el-card shadow="hover">
           <template #header>
             <div class="card-header">
-              <span>TOP10 股票排名</span>
+              <span>TOP10 股票排名（20日预测）</span>
               <NuxtLink to="/rankings">
                 <el-button text type="primary" size="small">
                   查看全部 <el-icon><ElIconArrowRight /></el-icon>

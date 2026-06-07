@@ -48,6 +48,7 @@ def get_rankings(snapshot_date: Optional[str] = Query(None), db: Session = Depen
             stock_code=r.stock_code,
             stock_name=r.stock_name or "",
             predicted_return=float(r.predicted_return or 0),
+            predicted_return_1d=float(r.predicted_return_1d or 0) if r.predicted_return_1d else None,
             confidence=confidence_map.get(r.stock_code),
             industry=r.industry,
             market_cap=float(r.market_cap or 0),

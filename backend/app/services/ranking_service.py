@@ -48,6 +48,7 @@ class RankingService:
                 stock_code=item["stock_code"],
                 stock_name=item.get("stock_name", ""),
                 predicted_return=item.get("predicted_return", 0),
+                predicted_return_1d=item.get("predicted_return_1d", 0),
                 industry=item.get("industry", ""),
                 market_cap=item.get("market_cap", 0),
                 top_factors_json=item.get("top_factors", []),

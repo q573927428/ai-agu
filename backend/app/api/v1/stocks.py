@@ -69,6 +69,7 @@ def get_stock_detail(code: str, db: Session = Depends(get_db)) -> ApiResponse:
         "latest_prediction": {
             "predict_date": str(detail["latest_prediction"].predict_date) if detail["latest_prediction"] else None,
             "predicted_return": float(detail["latest_prediction"].predicted_return) if detail["latest_prediction"] else None,
+            "predicted_return_1d": float(detail["latest_prediction"].predicted_return_1d) if detail["latest_prediction"] and detail["latest_prediction"].predicted_return_1d else None,
             "confidence": float(detail["latest_prediction"].confidence) if detail["latest_prediction"] else None,
         } if detail["latest_prediction"] else None,
     })
@@ -185,6 +186,7 @@ def get_stock_prediction(code: str, db: Session = Depends(get_db)) -> ApiRespons
             {
                 "predict_date": str(r.predict_date),
                 "predicted_return": float(r.predicted_return) if r.predicted_return else None,
+                "predicted_return_1d": float(r.predicted_return_1d) if r.predicted_return_1d else None,
                 "confidence": float(r.confidence) if r.confidence else None,
             }
             for r in records

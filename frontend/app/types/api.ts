@@ -11,6 +11,7 @@ export interface RankingItem {
   stock_code: string;
   stock_name: string;
   predicted_return: number;
+  predicted_return_1d: number | null;
   confidence: number | null;
   industry: string | null;
   market_cap: number | null;
@@ -57,6 +58,7 @@ export interface StockDaily {
 export interface StockPrediction {
   predict_date: string;
   predicted_return: number | null;
+  predicted_return_1d: number | null;
   confidence: number | null;
   model_version: string | null;
 }
