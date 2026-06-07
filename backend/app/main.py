@@ -80,6 +80,7 @@ async def market_overview():
                 "last_train_date": None,
                 "latest_ic": 0,
                 "is_active": False,
+                "models": [],
             },
         },
         "message": "success",

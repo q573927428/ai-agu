@@ -111,5 +111,14 @@ export interface MarketOverview {
     last_train_date: string | null;
     latest_ic: number;
     is_active: boolean;
+    models?: Array<{
+      id: number;
+      model_version: string;
+      train_date: string | null;
+      valid_ic: number;
+      num_samples: number | null;
+      num_features: number | null;
+      is_active: boolean;
+    }>;
   };
 }

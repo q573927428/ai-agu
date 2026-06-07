@@ -105,42 +105,53 @@ class MarketService:
         }
 
     def _get_model_status(self) -> dict:
-        """获取模型状态"""
-        active_model = (
-            self.db.query(ModelRecord)
-            .filter(ModelRecord.is_active == 1)
-            .order_by(ModelRecord.train_date.desc())
-            .first()
+        """获取模型状态（仅返回最新日期的模型）"""
+        # 获取最新训练日期
+        latest_date = (
+            self.db.query(func.max(ModelRecord.train_date))
+            .scalar()
         )
 
-        if not active_model:
-            # 尝试获取最新训练的模型
-            latest_model = (
-                self.db.query(ModelRecord)
-                .order_by(ModelRecord.train_date.desc())
-                .first()
-            )
-
-            if not latest_model:
-                return {
-                    "model_version": "",
-                    "last_train_date": None,
-                    "latest_ic": 0,
-                    "is_active": False,
-                }
-
+        if not latest_date:
             return {
-                "model_version": latest_model.model_version,
-                "last_train_date": str(latest_model.train_date) if latest_model.train_date else None,
-                "latest_ic": float(latest_model.valid_ic) if latest_model.valid_ic else 0,
+                "model_version": "",
+                "last_train_date": None,
+                "latest_ic": 0,
                 "is_active": False,
             }
 
+        # 获取最新日期的所有模型
+        latest_models = (
+            self.db.query(ModelRecord)
+            .filter(ModelRecord.train_date == latest_date)
+            .order_by(ModelRecord.id.desc())
+            .all()
+        )
+
+        # 构造模型列表
+        model_list = []
+        for m in latest_models:
+            model_list.append({
+                "id": m.id,
+                "model_version": m.model_version,
+                "train_date": str(m.train_date) if m.train_date else None,
+                "valid_ic": float(m.valid_ic) if m.valid_ic else 0,
+                "num_samples": m.num_samples,
+                "num_features": m.num_features,
+                "is_active": bool(m.is_active),
+            })
+
+        # 获取活跃模型
+        active_model = next((m for m in latest_models if m.is_active == 1), None)
+        latest_model = latest_models[0] if latest_models else None
+        display_model = active_model or latest_model
+
         return {
-            "model_version": active_model.model_version,
-            "last_train_date": str(active_model.train_date) if active_model.train_date else None,
-            "latest_ic": float(active_model.valid_ic) if active_model.valid_ic else 0,
-            "is_active": True,
+            "model_version": display_model.model_version if display_model else "",
+            "last_train_date": str(latest_date),
+            "latest_ic": float(display_model.valid_ic) if display_model and display_model.valid_ic else 0,
+            "is_active": bool(active_model is not None),
+            "models": model_list,
         }
 
     def _empty_overview(self) -> dict:

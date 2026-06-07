@@ -93,6 +93,9 @@
           <template #header>
             <div class="card-header">
               <span>模型状态</span>
+              <el-tag type="info" size="small" v-if="modelStatus.models">
+                共 {{ modelStatus.models.length }} 个模型
+              </el-tag>
             </div>
           </template>
           <el-descriptions :column="4" border>
@@ -105,6 +108,38 @@
               </el-tag>
             </el-descriptions-item>
           </el-descriptions>
+
+          <!-- 所有模型记录列表 -->
+          <div v-if="modelStatus.models && modelStatus.models.length > 0" style="margin-top: 16px">
+            <el-table :data="modelStatus.models" stripe size="small" border style="width: 100%">
+              <el-table-column type="index" label="#" width="50" />
+              <el-table-column prop="model_version" label="模型版本" min-width="180" />
+              <el-table-column prop="train_date" label="训练日期" width="120" />
+              <el-table-column prop="valid_ic" label="IC" width="100" align="right">
+                <template #default="{ row }">
+                  {{ row.valid_ic != null ? row.valid_ic.toFixed(4) : "--" }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="num_samples" label="样本数" width="100" align="right">
+                <template #default="{ row }">
+                  {{ row.num_samples ?? "--" }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="num_features" label="特征数" width="80" align="right">
+                <template #default="{ row }">
+                  {{ row.num_features ?? "--" }}
+                </template>
+              </el-table-column>
+              <el-table-column label="状态" width="80" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="row.is_active ? 'success' : 'info'" size="small">
+                    {{ row.is_active ? "活跃" : "非活跃" }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <el-empty v-else description="暂无模型记录" :image-size="60" style="margin-top: 16px" />
         </el-card>
       </el-col>
     </el-row>
