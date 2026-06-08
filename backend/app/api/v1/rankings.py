@@ -86,19 +86,12 @@ def get_rankings(snapshot_date: Optional[str] = Query(None), db: Session = Depen
         if current_close and target_close and current_close > 0:
             actual_return_20d = round((target_close / current_close - 1), 4)
 
-        # 实际次日涨跌幅
-        next_day_data = stock_actual.get(next_date, (None, None, None))
-        next_day_pct = next_day_data[2]
-        actual_return_1d = round(next_day_pct / 100.0, 4) if next_day_pct is not None else None
-
         items.append(RankingItem(
             rank=r.rank_position,
             stock_code=r.stock_code,
             stock_name=r.stock_name or "",
             predicted_return=float(r.predicted_return or 0),
-            predicted_return_1d=float(r.predicted_return_1d or 0) if r.predicted_return_1d else None,
             actual_return_20d=actual_return_20d,
-            actual_return_1d=actual_return_1d,
             confidence=confidence_map.get(r.stock_code),
             industry=r.industry,
             market_cap=float(r.market_cap or 0),

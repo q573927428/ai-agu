@@ -87,20 +87,13 @@ def compute_actual_returns(db: Session, predictions: list) -> list:
 
         # 转换预测值为百分数（prediction 表存的是小数，如 0.05 = 5% → 转为 5.0）
         pred_20d = float(p.predicted_return) * 100 if p.predicted_return is not None else None
-        pred_1d = float(p.predicted_return_1d) * 100 if p.predicted_return_1d is not None else None
-        # 实际次日涨跌幅（pct_chg 是百分数如 5.0 表示 +5%）
-        actual_return_1d = next_day_pct if next_day_pct is not None else None
-
         results.append({
             "stock_code": p.stock_code,
             "predict_date": p.predict_date,
             "target_date": p.target_date,
             "predicted_return_20d": pred_20d,
             "actual_return_20d": actual_return_20d,
-            "predicted_return_1d": pred_1d,
-            "actual_return_1d": actual_return_1d,
-            "confidence_20d": float(p.confidence) if p.confidence else None,
-            "confidence_1d": float(p.confidence_1d) if p.confidence_1d else None,
+            "confidence": float(p.confidence) if p.confidence else None,
         })
 
     return results
@@ -144,34 +137,6 @@ def compute_metrics(results: list) -> dict:
         metrics["20d_pred_mean"] = round(valid_20d["predicted_return_20d"].mean(), 2)
         metrics["20d_actual_mean"] = round(valid_20d["actual_return_20d"].mean(), 2)
 
-    # === 次日收益率验证 ===
-    valid_1d = df.dropna(subset=["predicted_return_1d", "actual_return_1d"])
-    if len(valid_1d) > 0:
-        # 方向准确率
-        direction_correct_1d = (
-            ((valid_1d["predicted_return_1d"] > 0) & (valid_1d["actual_return_1d"] > 0)) |
-            ((valid_1d["predicted_return_1d"] < 0) & (valid_1d["actual_return_1d"] < 0))
-        ).sum()
-        metrics["1d_direction_accuracy"] = round(direction_correct_1d / len(valid_1d), 4)
-        metrics["1d_total_samples"] = len(valid_1d)
-        metrics["1d_direction_correct"] = int(direction_correct_1d)
-
-        # Rank Correlation
-        pred_rank_1d = valid_1d["predicted_return_1d"].rank()
-        actual_rank_1d = valid_1d["actual_return_1d"].rank()
-        rank_corr_1d = pred_rank_1d.corr(actual_rank_1d)
-        metrics["1d_rank_correlation"] = round(rank_corr_1d, 4) if not pd.isna(rank_corr_1d) else None
-
-        # Pearson Correlation
-        pearson_1d = valid_1d["predicted_return_1d"].corr(valid_1d["actual_return_1d"])
-        metrics["1d_pearson_correlation"] = round(pearson_1d, 4) if not pd.isna(pearson_1d) else None
-
-        # MAE
-        mae_1d = (valid_1d["predicted_return_1d"] - valid_1d["actual_return_1d"]).abs().mean()
-        metrics["1d_mae_pct"] = round(mae_1d, 2)
-
-        metrics["1d_pred_mean"] = round(valid_1d["predicted_return_1d"].mean(), 2)
-        metrics["1d_actual_mean"] = round(valid_1d["actual_return_1d"].mean(), 2)
 
     return metrics, df
 
@@ -188,7 +153,6 @@ def print_summary(metrics: dict, df: pd.DataFrame, stock_filter: str = None):
 
     print(f"\n📊 总预测记录数: {len(df)}")
     print(f"  有实际20日收益可验证: {metrics.get('20d_total_samples', 0)} 条")
-    print(f"  有实际次日收益可验证: {metrics.get('1d_total_samples', 0)} 条")
 
     # 20日预测
     if '20d_total_samples' in metrics and metrics['20d_total_samples'] > 0:
@@ -200,28 +164,17 @@ def print_summary(metrics: dict, df: pd.DataFrame, stock_filter: str = None):
         print(f"  📉 平均绝对误差(MAE): {metrics.get('20d_mae_pct', 'N/A')}%")
         print(f"  📊 预测平均: {metrics.get('20d_pred_mean', 'N/A')}% | 实际平均: {metrics.get('20d_actual_mean', 'N/A')}%")
 
-    # 次日预测
-    if '1d_total_samples' in metrics and metrics['1d_total_samples'] > 0:
-        print(f"\n📈 【次日收益率预测验证】")
-        print(f"  ✅ 方向准确率: {metrics['1d_direction_accuracy']*100:.2f}%")
-        print(f"     （{metrics['1d_direction_correct']}/{metrics['1d_total_samples']} 次方向判断正确）")
-        print(f"  📐 Spearman秩相关: {metrics.get('1d_rank_correlation', 'N/A')}")
-        print(f"  📐 Pearson相关:    {metrics.get('1d_pearson_correlation', 'N/A')}")
-        print(f"  📉 平均绝对误差(MAE): {metrics.get('1d_mae_pct', 'N/A')}%")
-        print(f"  📊 预测平均: {metrics.get('1d_pred_mean', 'N/A')}% | 实际平均: {metrics.get('1d_actual_mean', 'N/A')}%")
 
     # 打印部分详细记录
     print(f"\n📋 详细记录（前20条）:")
-    print(f"  {'股票代码':<10} {'预测日期':<12} {'预测20日%':<12} {'实际20日%':<12} {'预测次日%':<12} {'实际次日%':<12} {'准确?':<6}")
-    print(f"  {'-'*10} {'-'*12} {'-'*12} {'-'*12} {'-'*12} {'-'*12} {'-'*6}")
+    print(f"  {'股票代码':<10} {'预测日期':<12} {'预测20日%':<12} {'实际20日%':<12} {'准确?':<6}")
+    print(f"  {'-'*10} {'-'*12} {'-'*12} {'-'*12} {'-'*6}")
     
     # 决定排序方式：如果有股票过滤按日期，否则按预测日期倒序
     display_df = df if len(df) <= 20 else df.head(20)
     for _, r in display_df.iterrows():
         pred_20 = r.get("predicted_return_20d")
         actual_20 = r.get("actual_return_20d")
-        pred_1 = r.get("predicted_return_1d")
-        actual_1 = r.get("actual_return_1d")
         
         # 判断方向是否准确（20日）
         correct_20 = ""
@@ -234,8 +187,6 @@ def print_summary(metrics: dict, df: pd.DataFrame, stock_filter: str = None):
         print(f"  {r['stock_code']:<10} {str(r['predict_date']):<12} "
               f"{f'{pred_20:+.2f}' if pred_20 is not None else 'N/A':<12} "
               f"{f'{actual_20:+.2f}' if actual_20 is not None else 'N/A':<12} "
-              f"{f'{pred_1:+.2f}' if pred_1 is not None else 'N/A':<12} "
-              f"{f'{actual_1:+.2f}' if actual_1 is not None else 'N/A':<12} "
               f"{correct_20:<6}")
 
     # TOP10 选出预测涨幅最大的10只，看实际表现

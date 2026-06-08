@@ -52,20 +52,6 @@ try:
     else:
         logger.info(f"训练结果: {result['status']} 版本={result.get('model_version','?')}")
 
-    # 5. 训练1日预测模型（使用同样范围的因子数据，但标签为次日收益率）
-    logger.info(f"\n{'='*50}")
-    logger.info("训练1日预测模型...")
-    logger.info(f"{'='*50}")
-    result_1d = trainer.train_1d(start, end)
-    if result_1d.get("note") == "1d multi-model ensemble":
-        logger.info(
-            f"1日预测训练结果: {result_1d['status']} "
-            f"集成子模型数={result_1d.get('ensemble_size', '?')} "
-            f"IC均值={result_1d.get('valid_ic_mean', '?'):.4f}"
-        )
-    else:
-        logger.info(f"1日预测训练结果: {result_1d['status']} 版本={result_1d.get('model_version','?')}")
-
 except Exception as e:
     logger.error(f"失败: {e}")
     import traceback

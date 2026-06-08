@@ -19,7 +19,6 @@ class Predictor:
     def __init__(self, db: Session):
         self.db = db
         self.ensemble = EnsembleModel()
-        self.ensemble_1d = EnsembleModel()
 
     def _load_active_models(self, max_models: int = 5):
         """加载最近训练的20日预测模型用于集成预测"""
@@ -56,50 +55,12 @@ class Predictor:
         logger.info(f"20日集成模型加载完成: {loaded_count} 个模型")
         return True
 
-    def _load_active_models_1d(self, max_models: int = 3):
-        """加载最近训练的1日预测模型"""
-        records = (
-            self.db.query(ModelRecord)
-            .filter(
-                ModelRecord.model_path.isnot(None),
-                ModelRecord.model_version.like("1d_model%"),
-                ModelRecord.is_active == 1,
-            )
-            .order_by(ModelRecord.id.desc())
-            .limit(max_models)
-            .all()
-        )
-
-        if not records:
-            logger.warning("没有活跃模型（1日），跳过1日预测")
-            return False
-
-        self.ensemble_1d = EnsembleModel()
-        loaded_count = 0
-        for record in records:
-            if not record.model_path or not os.path.exists(record.model_path):
-                logger.warning(f"1d模型文件不存在: {record.model_path}")
-                continue
-            model = LightGBMModel(record.model_path)
-            self.ensemble_1d.add_model(model, record.model_version, record.id)
-            loaded_count += 1
-
-        if loaded_count == 0:
-            logger.warning("没有成功加载任何1日模型")
-            return False
-
-        logger.info(f"1日集成模型加载完成: {loaded_count} 个模型")
-        return True
-
     def predict_daily(self, trade_date: str) -> pd.DataFrame:
         """每日预测全市场股票（多模型集成版）"""
         # 加载20日集成模型
         if not self._load_active_models():
             logger.error("无法加载20日模型，跳过预测")
             return pd.DataFrame()
-
-        # 加载1日集成模型（可选）
-        has_1d = self._load_active_models_1d()
 
         # 获取当日因子数据
         factors = (
@@ -127,15 +88,8 @@ class Predictor:
 
         X = pd.DataFrame(records)
 
-        # ===== 20日集成分预测 =====
+        # 集成预测
         mean_preds_20d, confidences_20d = self.ensemble.predict(X)
-
-        # ===== 1日集成分预测 =====
-        if has_1d:
-            mean_preds_1d, confidences_1d = self.ensemble_1d.predict(X)
-        else:
-            mean_preds_1d = np.zeros(len(X))
-            confidences_1d = np.zeros(len(X))
 
         # 模型版本号（20日）
         model_versions = self.ensemble.model_versions
@@ -154,18 +108,14 @@ class Predictor:
         results = []
         for i, stock_code in enumerate(stock_codes):
             pred_20d = float(mean_preds_20d[i]) / 100.0  # 百分数转小数
-            pred_1d = float(mean_preds_1d[i]) / 100.0 if has_1d else 0.0
             conf_20d = float(confidences_20d[i])
-            conf_1d = float(confidences_1d[i]) if has_1d else 0.0
 
             prediction = Prediction(
                 stock_code=stock_code,
                 predict_date=predict_date,
                 target_date=target_date,
                 predicted_return=round(pred_20d, 6),
-                predicted_return_1d=round(pred_1d, 6),
                 confidence=round(conf_20d, 4),
-                confidence_1d=round(conf_1d, 4),
                 model_version=model_version,
                 rank_score=pred_20d,
             )
@@ -173,9 +123,7 @@ class Predictor:
             results.append({
                 "stock_code": stock_code,
                 "predicted_return": pred_20d,
-                "predicted_return_1d": pred_1d,
                 "confidence": conf_20d,
-                "confidence_1d": conf_1d,
             })
 
         self.db.commit()
@@ -186,8 +134,7 @@ class Predictor:
         df = pd.DataFrame(results)
         logger.info(
             f"集成预测完成: {len(results)} 只股票, "
-            f"20d集成模型数: {self.ensemble.count}, "
-            f"1d集成模型数: {self.ensemble_1d.count if has_1d else 0}, "
+            f"集成模型数: {self.ensemble.count}, "
             f"模型版本: {model_version}"
         )
         return df
@@ -208,7 +155,6 @@ class Predictor:
                 "rank": i,
                 "stock_code": p.stock_code,
                 "predicted_return": float(p.predicted_return or 0),
-                "predicted_return_1d": float(p.predicted_return_1d or 0) if p.predicted_return_1d else 0,
                 "confidence": float(p.confidence or 0),
             })
 

@@ -93,12 +93,6 @@
                 </span>
               </div>
               <div class="info-row">
-                <span class="info-label">预测涨跌幅（次日）</span>
-                <span class="info-value" :style="{ color: getReturnColor(stockPrediction.predicted_return_1d) }">
-                  {{ formatPercent(stockPrediction.predicted_return_1d) }}
-                </span>
-              </div>
-              <div class="info-row">
                 <span class="info-label">置信度</span>
                 <span class="info-value">{{ formatConfidence(stockPrediction.confidence) }}</span>
               </div>
