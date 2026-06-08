@@ -12,7 +12,9 @@ class DataFetcher:
     def _get_pro(self):
         """获取 Tushare Pro API 实例"""
         import tushare as ts
-        token = settings.tushare_token or "0c5fcf150b255ac8295383e5f0ba8fc96c0ab39fcd3e7718aa3a8f0b"
+        token = settings.tushare_token
+        if not token:
+            raise ValueError("TUSHARE_TOKEN 未设置，请通过 .env 或环境变量配置")
         ts.set_token(token)
         return ts.pro_api()
 

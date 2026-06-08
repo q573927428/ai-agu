@@ -5,15 +5,15 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
-    # MySQL
-    mysql_root_password: str = "root123"
-    mysql_password: str = "agu123"
+    # MySQL (请通过 .env 设置)
+    mysql_root_password: str = ""
+    mysql_password: str = ""
     mysql_host: str = "localhost"
     mysql_port: int = 3306
     mysql_database: str = "agu_quant"
 
-    # Backend
-    database_url: str = "mysql+pymysql://agu_user:agu123@localhost:3306/agu_quant"
+    # Backend (请通过 .env 设置 DATABASE_URL)
+    database_url: str = ""
     app_env: str = "development"
     log_level: str = "INFO"
 
@@ -21,8 +21,8 @@ class Settings(BaseSettings):
     model_dir: str = ""  # 在 __init__ 中设为绝对路径
     model_version: str = "v1.0"
 
-    # Tushare
-    tushare_token: str = "0c5fcf150b255ac8295383e5f0ba8fc96c0ab39fcd3e7718aa3a8f0b"
+    # Tushare (请通过 .env 或环境变量设置 TUSHARE_TOKEN)
+    tushare_token: str = ""
 
     # AkShare
     http_proxy: Optional[str] = ""
