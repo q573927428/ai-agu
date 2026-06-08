@@ -2,7 +2,7 @@
 import os
 import pandas as pd
 import numpy as np
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from typing import Optional, List
 from loguru import logger
 from sqlalchemy.orm import Session
@@ -11,6 +11,7 @@ from app.models.factor import FactorStore
 from app.models.prediction import Prediction
 from app.models.model_record import ModelRecord
 from app.config import settings
+from app.utils.date_utils import get_next_trade_day
 
 
 class Predictor:
@@ -56,6 +57,8 @@ class Predictor:
 
     def predict_daily(self, trade_date: str) -> pd.DataFrame:
         """每日预测全市场股票（多模型集成版）"""
+        trade_date_obj = datetime.strptime(trade_date, "%Y-%m-%d").date()
+
         # 加载次日集成模型
         if not self._load_active_models():
             logger.error("无法加载次日预测模型，跳过预测")
@@ -64,7 +67,7 @@ class Predictor:
         # 获取当日因子数据
         factors = (
             self.db.query(FactorStore)
-            .filter(FactorStore.trade_date == trade_date)
+            .filter(FactorStore.trade_date == trade_date_obj)
             .all()
         )
 
@@ -99,7 +102,7 @@ class Predictor:
 
         # 保存预测结果
         predict_date = date.today()
-        target_date = datetime.strptime(trade_date, "%Y-%m-%d").date() + timedelta(days=1)
+        target_date = get_next_trade_day(datetime.combine(trade_date_obj, datetime.min.time())).date()
 
         # 删除旧预测
         self.db.query(Prediction).filter(Prediction.predict_date == predict_date).delete()
@@ -140,9 +143,10 @@ class Predictor:
 
     def get_top_n(self, predict_date: str, n: int = 50) -> List[dict]:
         """获取当日预测收益率最高的N只股票"""
+        predict_date_obj = datetime.strptime(predict_date, "%Y-%m-%d").date() if isinstance(predict_date, str) else predict_date
         predictions = (
             self.db.query(Prediction)
-            .filter(Prediction.predict_date == predict_date)
+            .filter(Prediction.predict_date == predict_date_obj)
             .order_by(Prediction.predicted_return.desc())
             .limit(n)
             .all()

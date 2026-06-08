@@ -1,7 +1,6 @@
-"""标签生成器 - 计算次日收益率"""
+"""标签生成器 - 计算下一交易日收益率"""
 import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 from loguru import logger
 from sqlalchemy.orm import Session
 from app.models.stock_daily import StockDaily
@@ -15,9 +14,14 @@ class LabelGenerator:
         self.db = db
 
     def generate_labels(self, trade_date: str) -> pd.DataFrame:
-        """生成次日收益率标签（使用pct_chg涨跌幅）"""
-        trade_date_dt = datetime.strptime(trade_date, "%Y-%m-%d").date()
-        next_date = trade_date_dt + timedelta(days=1)
+        """生成下一交易日收益率标签（使用下一交易日 pct_chg 涨跌幅）。"""
+        trade_date_dt = datetime.strptime(trade_date, "%Y-%m-%d")
+        trade_date_obj = trade_date_dt.date()
+        next_trade_days = get_next_n_trade_days(trade_date_dt, 1)
+        if not next_trade_days:
+            logger.warning(f"{trade_date} 未找到下一交易日，无法生成标签")
+            return pd.DataFrame()
+        next_date = next_trade_days[0].date()
 
         # 获取当日所有股票的次日涨跌幅
         rows = (
@@ -33,7 +37,7 @@ class LabelGenerator:
             # pct_chg 已经是百分数（如 5.0 = 5%），直接作为标签
             labels.append({
                 "stock_code": stock_code,
-                "trade_date": trade_date_dt,
+                "trade_date": trade_date_obj,
                 "future_return_1d": float(pct_chg),
             })
 

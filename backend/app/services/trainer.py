@@ -240,17 +240,20 @@ class Trainer:
                 .all()
             )
 
-            current_stock = None
-            dates_list = []
+            rows_by_stock = {}
+            for stock_code, trade_date, pct_chg in rows:
+                rows_by_stock.setdefault(stock_code, []).append((trade_date, pct_chg))
 
-            for row in rows:
-                sc, td, pct = row
-                if pct is None:
-                    continue
-                # 次日收益率 = T+1日的 pct_chg（当日涨跌幅÷100）
-                # 标签使用百分数，pct_chg 已存为涨跌幅百分比（如 5.0 = 5%）
-                future_return = float(pct)
-                label_map[(sc, td)] = future_return
+            for stock_code, stock_rows in rows_by_stock.items():
+                stock_rows.sort(key=lambda item: item[0])
+                for idx in range(len(stock_rows) - 1):
+                    current_date, _ = stock_rows[idx]
+                    _, next_pct_chg = stock_rows[idx + 1]
+                    if next_pct_chg is None:
+                        continue
+                    # 下一交易日收益率 = 同一股票下一条交易记录的 pct_chg。
+                    # pct_chg 已存为百分数（如 5.0 = 5%），训练标签也保持百分数口径。
+                    label_map[(stock_code, current_date)] = float(next_pct_chg)
 
             logger.info(f"标签计算进度: {min(i + LABEL_BATCH, len(stock_codes))}/{len(stock_codes)} 只股票")
 
@@ -431,6 +434,7 @@ class Trainer:
             "valid_ic_std": float(np.std(ics)),
             "note": "multi-model ensemble",
         }
+
 
 
 

@@ -1,8 +1,8 @@
-"""因子计算引擎 - 优化版：批量查询消除N+1"""
+"""因子计算引擎 - 批量化、数值安全与幂等保存优化版"""
 import pandas as pd
 import numpy as np
-from typing import Optional, List, Dict
-from datetime import datetime, timedelta
+from typing import Optional, List, Dict, Any
+from datetime import datetime, date
 from loguru import logger
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -10,9 +10,44 @@ from app.models.factor import FactorStore
 from app.models.stock_daily import StockDaily
 from app.models.macro import MacroData
 from app.models.fina_indicator import FinaIndicator
-from app.models.income import Income
 from app.models.balancesheet import Balancesheet
 from app.models.stock import StockBasic
+
+
+FACTOR_ID_COLUMNS = {"stock_code", "trade_date"}
+
+DEFAULT_INDUSTRY_FACTORS = {
+    "industry_return_5d": 0,
+    "industry_return_20d": 0,
+    "industry_return_volatility": 0,
+    "industry_pe_percentile": 0.5,
+    "industry_pb_percentile": 0.5,
+    "industry_roe_median": 0,
+    "industry_momentum_rank": 0.5,
+    "industry_reversal_signal": 0,
+    "industry_fund_flow": 0,
+    "industry_dispersion": 0,
+}
+
+
+def _parse_trade_date(trade_date: str | date | datetime) -> date:
+    """统一交易日期输入，避免字符串与 Date 字段比较不一致。"""
+    if isinstance(trade_date, datetime):
+        return trade_date.date()
+    if isinstance(trade_date, date):
+        return trade_date
+    return datetime.strptime(trade_date, "%Y-%m-%d").date()
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """安全转 float，并把 None/NaN/Inf 收敛为默认值。"""
+    if value is None:
+        return default
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return default
+    return result if np.isfinite(result) else default
 
 
 class FactorEngine:
@@ -27,27 +62,37 @@ class FactorEngine:
             return df
 
         df = df.copy()
-        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        factor_cols = [
+            col for col in df.select_dtypes(include=[np.number]).columns
+            if col not in FACTOR_ID_COLUMNS
+        ]
+        if not factor_cols:
+            return df
+
+        df[factor_cols] = df[factor_cols].replace([np.inf, -np.inf], np.nan)
 
         # 缺失值填充（列中位数）
-        for col in numeric_cols:
-            df[col] = df[col].fillna(df[col].median())
+        for col in factor_cols:
+            median = df[col].median()
+            df[col] = df[col].fillna(0 if pd.isna(median) else median)
 
         # MAD法去极值（5倍中位数绝对偏差）
-        for col in numeric_cols:
+        for col in factor_cols:
             median = df[col].median()
             mad = np.median(np.abs(df[col] - median))
-            if mad > 0:
+            if np.isfinite(mad) and mad > 0:
                 upper = median + 5 * mad
                 lower = median - 5 * mad
                 df[col] = df[col].clip(lower, upper)
 
         # Z-Score标准化
-        for col in numeric_cols:
+        for col in factor_cols:
             mean = df[col].mean()
             std = df[col].std()
-            if std > 0:
+            if np.isfinite(std) and std > 0:
                 df[col] = (df[col] - mean) / std
+
+        df[factor_cols] = df[factor_cols].replace([np.inf, -np.inf], 0).fillna(0)
 
         return df
 
@@ -55,25 +100,32 @@ class FactorEngine:
 
     def compute_macro_factors(self, trade_date: str) -> pd.Series:
         """计算宏观因子"""
-        macro = self.db.query(MacroData).order_by(MacroData.data_date.desc()).first()
+        trade_date_obj = _parse_trade_date(trade_date)
+        macro = (
+            self.db.query(MacroData)
+            .filter(MacroData.data_date <= trade_date_obj)
+            .order_by(MacroData.data_date.desc())
+            .first()
+        )
         if not macro:
             return pd.Series(dtype=float)
 
         return pd.Series({
-            "macro_gdp_yoy": float(macro.gdp_yoy or 0),
-            "macro_cpi_yoy": float(macro.cpi_yoy or 0),
-            "macro_ppi_yoy": float(macro.ppi_yoy or 0),
-            "macro_pmi": float(macro.pmi or 0),
-            "macro_m2_yoy": float(macro.m2_yoy or 0),
-            "macro_shibor_on": float(macro.shibor_on or 0),
-            "macro_shibor_1m": float(macro.shibor_1m or 0),
-            "macro_hgt": float(macro.hgt or 0),
-            "macro_sgt": float(macro.sgt or 0),
-            "macro_north_flow": float(macro.north_flow or 0),
-            "macro_margin_balance": float(macro.margin_balance or 0),
-            "macro_us_y3m": float(macro.us_y3m or 0),
-            "macro_us_y2y": float(macro.us_y2y or 0),
-            "macro_us_y10y": float(macro.us_y10y or 0),
+            "macro_gdp_yoy": _safe_float(macro.gdp_yoy),
+            "macro_cpi_yoy": _safe_float(macro.cpi_yoy),
+            "macro_ppi_yoy": _safe_float(macro.ppi_yoy),
+            "macro_pmi": _safe_float(macro.pmi),
+            "macro_m2_yoy": _safe_float(macro.m2_yoy),
+            "macro_shibor_on": _safe_float(macro.shibor_on),
+            "macro_shibor_1m": _safe_float(macro.shibor_1m),
+            "macro_usdcny": 0,
+            "macro_hgt": _safe_float(macro.hgt),
+            "macro_sgt": _safe_float(macro.sgt),
+            "macro_north_flow": _safe_float(macro.north_flow),
+            "macro_margin_balance": _safe_float(macro.margin_balance),
+            "macro_us_y3m": _safe_float(macro.us_y3m),
+            "macro_us_y2y": _safe_float(macro.us_y2y),
+            "macro_us_y10y": _safe_float(macro.us_y10y),
         })
 
     # ==================== 市场因子 ====================
@@ -82,14 +134,15 @@ class FactorEngine:
         """计算市场因子 - 基于全市场股票数据"""
         from app.utils.date_utils import get_previous_n_trade_days
 
-        trade_date_dt = datetime.strptime(trade_date, "%Y-%m-%d")
+        trade_date_obj = _parse_trade_date(trade_date)
+        trade_date_dt = datetime.combine(trade_date_obj, datetime.min.time())
         past_dates = get_previous_n_trade_days(trade_date_dt, 20)
 
         # 获取全市场当日数据
         current_records = (
             self.db.query(StockDaily.stock_code, StockDaily.close, StockDaily.volume,
                           StockDaily.amount, StockDaily.pct_chg)
-            .filter(StockDaily.trade_date == trade_date_dt.date())
+            .filter(StockDaily.trade_date == trade_date_obj)
             .all()
         )
 
@@ -134,14 +187,19 @@ class FactorEngine:
             if closes:
                 date_avg_prices[dt] = np.mean(closes)
 
-        avg_prices_arr = np.array(list(date_avg_prices.values()))
-        returns = np.diff(avg_prices_arr) / avg_prices_arr[:-1] if len(avg_prices_arr) > 1 else np.array([0])
+        avg_prices_arr = np.array(list(date_avg_prices.values()), dtype=float)
+        if len(avg_prices_arr) > 1:
+            with np.errstate(divide='ignore', invalid='ignore'):
+                returns = np.diff(avg_prices_arr) / avg_prices_arr[:-1]
+            returns = returns[np.isfinite(returns)]
+        else:
+            returns = np.array([0], dtype=float)
 
         # M01: 市场指数5日收益率
-        market_return_5d = float(avg_prices_arr[-1] / avg_prices_arr[-min(6, len(avg_prices_arr))] - 1) if len(avg_prices_arr) >= 6 else 0
+        market_return_5d = float(avg_prices_arr[-1] / avg_prices_arr[-6] - 1) if len(avg_prices_arr) >= 6 and avg_prices_arr[-6] > 0 else 0
 
         # M02: 市场指数20日收益率
-        market_return_20d = float(avg_prices_arr[-1] / avg_prices_arr[0] - 1) if len(avg_prices_arr) >= 2 else 0
+        market_return_20d = float(avg_prices_arr[-1] / avg_prices_arr[0] - 1) if len(avg_prices_arr) >= 2 and avg_prices_arr[0] > 0 else 0
 
         # M03: 市场指数20日年化波动率
         market_volatility_20d = float(np.std(returns) * np.sqrt(252)) if len(returns) >= 2 else 0
@@ -153,7 +211,7 @@ class FactorEngine:
         market_turnover_ma5 = float(np.mean(np.abs(recent_pct_chgs))) if recent_pct_chgs else 0
 
         # M05: 市场涨跌比
-        current_pct_chgs = [float(r.pct_chg) for r in current_records if r.pct_chg is not None]
+        current_pct_chgs = [_safe_float(r.pct_chg) for r in current_records if r.pct_chg is not None]
         advance = sum(1 for c in current_pct_chgs if c > 0)
         decline = sum(1 for c in current_pct_chgs if c < 0)
         advance_decline_ratio = float(advance / decline) if decline > 0 else float(advance + 1)
@@ -218,7 +276,8 @@ class FactorEngine:
         """
         from app.utils.date_utils import get_previous_n_trade_days
 
-        trade_date_dt = datetime.strptime(trade_date, "%Y-%m-%d")
+        trade_date_obj = _parse_trade_date(trade_date)
+        trade_date_dt = datetime.combine(trade_date_obj, datetime.min.time())
         past_dates_20 = get_previous_n_trade_days(trade_date_dt, 20)
 
         # 获取所有股票及其行业
@@ -315,16 +374,16 @@ class FactorEngine:
             if code in current_by_code:
                 q = current_by_code[code]
                 if q.pct_chg is not None:
-                    industry_data[ind]["current_pct_chgs"].append(float(q.pct_chg))
+                    industry_data[ind]["current_pct_chgs"].append(_safe_float(q.pct_chg))
                 if q.amount:
-                    industry_data[ind]["current_amounts"].append(float(q.amount))
+                    industry_data[ind]["current_amounts"].append(_safe_float(q.amount))
 
             # 历史20日收益率（直接查预分组字典，O(1)）
             code_hist = hist_grouped.get(code, {})
             dates_20 = sorted(code_hist.keys())
             if len(dates_20) >= 2:
-                first_close = float(code_hist[dates_20[0]].close or 0)
-                last_close = float(code_hist[dates_20[-1]].close or 0)
+                first_close = _safe_float(code_hist[dates_20[0]].close)
+                last_close = _safe_float(code_hist[dates_20[-1]].close)
                 if first_close > 0:
                     industry_data[ind]["hist_20d_returns"].append(last_close / first_close - 1)
 
@@ -343,7 +402,7 @@ class FactorEngine:
                         industry_data[ind]["pb_vals"].append(pb)
 
             if fina and fina.roe is not None:
-                industry_data[ind]["roe_vals"].append(float(fina.roe))
+                industry_data[ind]["roe_vals"].append(_safe_float(fina.roe))
 
         # 计算各行业因子
         industry_factors = {}
@@ -396,7 +455,8 @@ class FactorEngine:
     def _batch_load_historical_data(self, stock_codes: List[str], trade_date: str, days: int = 60) -> Dict[str, List]:
         """批量加载股票历史行情数据"""
         from app.utils.date_utils import get_previous_n_trade_days
-        trade_date_dt = datetime.strptime(trade_date, "%Y-%m-%d")
+        trade_date_obj = _parse_trade_date(trade_date)
+        trade_date_dt = datetime.combine(trade_date_obj, datetime.min.time())
         past_dates = get_previous_n_trade_days(trade_date_dt, days)
 
         records = (
@@ -495,7 +555,8 @@ class FactorEngine:
 
         if daily_records is None:
             # 兜底：如果没传数据，按原方式查
-            trade_date_dt = datetime.strptime(trade_date, "%Y-%m-%d")
+            trade_date_obj = _parse_trade_date(trade_date)
+            trade_date_dt = datetime.combine(trade_date_obj, datetime.min.time())
             past_dates = get_previous_n_trade_days(trade_date_dt, 60)
             daily_records = (
                 self.db.query(StockDaily)
@@ -507,19 +568,23 @@ class FactorEngine:
                 .all()
             )
 
+        daily_records = sorted(daily_records, key=lambda r: r.trade_date)
+
         if len(daily_records) < 5:
             return {}
 
-        closes = [float(r.close) for r in daily_records if r.close]
-        volumes = [float(r.volume) for r in daily_records if r.volume]
-        amounts = [float(r.amount) for r in daily_records if r.amount]
-        turnovers = [float(r.pct_chg or 0) for r in daily_records if r.pct_chg is not None]
+        closes = [_safe_float(r.close) for r in daily_records if r.close]
+        volumes = [_safe_float(r.volume) for r in daily_records if r.volume]
+        amounts = [_safe_float(r.amount) for r in daily_records if r.amount]
+        turnovers = [_safe_float(r.pct_chg) for r in daily_records if r.pct_chg is not None]
 
         if len(closes) < 5:
             return {}
 
         closes_arr = np.array(closes)
-        returns = np.diff(closes_arr) / closes_arr[:-1]
+        with np.errstate(divide='ignore', invalid='ignore'):
+            returns = np.diff(closes_arr) / closes_arr[:-1]
+        returns = returns[np.isfinite(returns)]
 
         latest = daily_records[-1]
 
@@ -552,15 +617,15 @@ class FactorEngine:
         factors["stock_turnover_rate_5d"] = float(np.mean(turnovers[-5:])) if len(turnovers) >= 5 else 0
 
         # S08: PE-TTM
-        eps_val = float(fina.eps) if fina and fina.eps and float(fina.eps) > 0 else 0
-        close_val = float(latest.close) if latest.close else 0
+        eps_val = _safe_float(fina.eps) if fina and fina.eps and _safe_float(fina.eps) > 0 else 0
+        close_val = _safe_float(latest.close) if latest.close else 0
         if eps_val > 0 and close_val > 0:
             factors["stock_pe_ttm"] = float(close_val / eps_val)
         else:
             factors["stock_pe_ttm"] = 0
 
         # S09: PB
-        bps_val = float(fina.bps) if fina and fina.bps and float(fina.bps) > 0 else 0
+        bps_val = _safe_float(fina.bps) if fina and fina.bps and _safe_float(fina.bps) > 0 else 0
         if bps_val > 0 and close_val > 0:
             factors["stock_pb"] = float(close_val / bps_val)
         else:
@@ -570,22 +635,22 @@ class FactorEngine:
         factors["stock_ps_ttm"] = 0
 
         # S11: ROE
-        factors["stock_roe_ttm"] = float(fina.roe) if fina and fina.roe is not None else 0
+        factors["stock_roe_ttm"] = _safe_float(fina.roe) if fina and fina.roe is not None else 0
 
         # S12: ROA
-        factors["stock_roa_ttm"] = float(fina.roa) if fina and fina.roa is not None else 0
+        factors["stock_roa_ttm"] = _safe_float(fina.roa) if fina and fina.roa is not None else 0
 
         # S13: 营收同比增速
-        factors["stock_revenue_yoy"] = float(fina.revenue_yoy) if fina and fina.revenue_yoy is not None else 0
+        factors["stock_revenue_yoy"] = _safe_float(fina.revenue_yoy) if fina and fina.revenue_yoy is not None else 0
 
         # S14: 净利润同比增速
-        factors["stock_profit_yoy"] = float(fina.net_profit_yoy) if fina and fina.net_profit_yoy is not None else 0
+        factors["stock_profit_yoy"] = _safe_float(fina.net_profit_yoy) if fina and fina.net_profit_yoy is not None else 0
 
         # S15: 毛利率
-        factors["stock_gross_margin"] = float(fina.gross_margin) if fina and fina.gross_margin is not None else 0
+        factors["stock_gross_margin"] = _safe_float(fina.gross_margin) if fina and fina.gross_margin is not None else 0
 
         # S16: 资产负债率
-        factors["stock_debt_ratio"] = float(fina.debt_ratio) if fina and fina.debt_ratio is not None else 0
+        factors["stock_debt_ratio"] = _safe_float(fina.debt_ratio) if fina and fina.debt_ratio is not None else 0
 
         # S17: 20日动量
         factors["stock_momentum_20d"] = float(closes_arr[-2] / closes_arr[-min(21, len(closes_arr))] - 1) if len(closes_arr) >= 21 else 0
@@ -602,7 +667,7 @@ class FactorEngine:
                 .first()
             )
         if bs and bs.cap_stk and close_val > 0:
-            total_shares = float(bs.cap_stk)
+            total_shares = _safe_float(bs.cap_stk)
             market_cap = close_val * total_shares
             factors["stock_size_factor"] = float(np.log(market_cap)) if market_cap > 0 else 0
         else:
@@ -630,8 +695,9 @@ class FactorEngine:
             trade_date: 交易日期
             top_n: 限制股票数量，0=全部
         """
+        trade_date_obj = _parse_trade_date(trade_date)
         query = self.db.query(StockDaily.stock_code).filter(
-            StockDaily.trade_date == trade_date
+            StockDaily.trade_date == trade_date_obj
         ).distinct()
 
         if top_n > 0:
@@ -652,7 +718,11 @@ class FactorEngine:
 
         # 获取股票行业映射
         stock_industry_map = {}
-        stock_list = self.db.query(StockBasic.stock_code, StockBasic.industry).all()
+        stock_list = (
+            self.db.query(StockBasic.stock_code, StockBasic.industry)
+            .filter(StockBasic.stock_code.in_(stock_codes))
+            .all()
+        )
         for code, ind in stock_list:
             if ind:
                 stock_industry_map[code] = ind
@@ -687,17 +757,11 @@ class FactorEngine:
 
             # 行业因子
             industry = stock_industry_map.get(stock_code, "")
-            industry_row = industry_factors.get(industry, {
-                "industry_return_5d": 0, "industry_return_20d": 0,
-                "industry_return_volatility": 0, "industry_pe_percentile": 0.5,
-                "industry_pb_percentile": 0.5, "industry_roe_median": 0,
-                "industry_momentum_rank": 0.5, "industry_reversal_signal": 0,
-                "industry_fund_flow": 0, "industry_dispersion": 0,
-            })
+            industry_row = industry_factors.get(industry, DEFAULT_INDUSTRY_FACTORS)
 
             row = {
                 "stock_code": stock_code,
-                "trade_date": trade_date,
+                "trade_date": trade_date_obj,
                 **macro_factors.to_dict(),
                 **market_factors.to_dict(),
                 **industry_row,
@@ -718,23 +782,45 @@ class FactorEngine:
         if df is None or df.empty:
             return
 
+        df = df.copy().replace([np.inf, -np.inf], np.nan)
+        factor_columns = [
+            col for col in df.columns
+            if col not in FACTOR_ID_COLUMNS and hasattr(FactorStore, col)
+        ]
+        df[factor_columns] = df[factor_columns].fillna(0)
+
         records = df.to_dict("records")
+        stock_codes = [record["stock_code"] for record in records if record.get("stock_code")]
+        trade_dates = {_parse_trade_date(record["trade_date"]) for record in records if record.get("trade_date")}
+
+        existing_map = {}
+        if stock_codes and trade_dates:
+            existing_records = (
+                self.db.query(FactorStore)
+                .filter(
+                    FactorStore.stock_code.in_(stock_codes),
+                    FactorStore.trade_date.in_(trade_dates),
+                )
+                .all()
+            )
+            existing_map = {(r.stock_code, r.trade_date): r for r in existing_records}
+
         for record in records:
             stock_code = record.pop("stock_code")
-            trade_date = record.pop("trade_date")
+            trade_date = _parse_trade_date(record.pop("trade_date"))
+            factor_values = {
+                key: _safe_float(value)
+                for key, value in record.items()
+                if key in factor_columns and value is not None
+            }
 
-            # 检查是否已存在
-            existing = self.db.query(FactorStore).filter(
-                FactorStore.stock_code == stock_code,
-                FactorStore.trade_date == trade_date,
-            ).first()
+            existing = existing_map.get((stock_code, trade_date))
 
             if existing:
-                for key, value in record.items():
-                    if hasattr(existing, key) and value is not None:
-                        setattr(existing, key, value)
+                for key, value in factor_values.items():
+                    setattr(existing, key, value)
             else:
-                factor_record = FactorStore(stock_code=stock_code, trade_date=trade_date, **record)
+                factor_record = FactorStore(stock_code=stock_code, trade_date=trade_date, **factor_values)
                 self.db.add(factor_record)
 
         self.db.commit()
