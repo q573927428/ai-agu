@@ -81,11 +81,17 @@
           <template #header>
             <div class="card-header">
               <span>TOP10 股票排名</span>
-              <NuxtLink to="/rankings">
-                <el-button text type="primary" size="small">
-                  查看全部 <el-icon><ElIconArrowRight /></el-icon>
-                </el-button>
-              </NuxtLink>
+              <div class="page-actions">
+                <el-date-picker
+                  v-model="selectedDate"
+                  type="date"
+                  placeholder="选择日期查看历史排名"
+                  :clearable="true"
+                  :disabled-date="disabledDate"
+                  @change="handleDateChange"
+                />
+                <el-button :icon="ElIconRefresh" @click="refreshData" :loading="loading">刷新</el-button>
+              </div>
             </div>
           </template>
           <RankingTable :data="topRankings" :loading="loading" @row-click="goToStock" />
@@ -105,6 +111,7 @@ import type { RankingItem, MarketOverview } from "~/types/api";
 const router = useRouter();
 const { fetchRankings, fetchMarketOverview } = useApi();
 
+const selectedDate = ref<Date | null>(null);
 const loading = ref(true);
 const topRankings = ref<RankingItem[]>([]);
 const marketOverview = ref<MarketOverview>({
@@ -243,6 +250,33 @@ onUnmounted(() => {
   stopAutoRefresh();
 });
 
+function disabledDate(time: Date): boolean {
+  // 禁止选择未来日期和周末（非交易日）
+  const day = time.getDay();
+  return time.getTime() > Date.now() || day === 0 || day === 6;
+}
+
+function handleDateChange(date: Date | null) {
+  if (date) {
+    selectedDate.value = date;
+    refreshData();
+  }
+}
+
+async function refreshData() {
+  loading.value = true;
+  try {
+    const res = await fetchRankings(dayjs(selectedDate.value).format("YYYY-MM-DD"));
+    if (res.data?.rankings) {
+      topRankings.value = res.data.rankings.slice(0, 10);
+    }
+  } catch (e) {
+    console.error("刷新排名失败", e);
+  } finally {
+    loading.value = false;
+  }
+}
+
 function goToStock(code: string) {
   router.push(`/stock/${code}`);
 }
@@ -288,6 +322,12 @@ function formatChangePercent(change: number | null | undefined): string {
 }
 
 .header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page-actions {
   display: flex;
   align-items: center;
   gap: 8px;
