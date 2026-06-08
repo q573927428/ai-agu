@@ -124,6 +124,7 @@ const chartOption = computed(() => {
         scale: true,
         splitArea: { show: true, areaStyle: { color: ["rgba(250,250,250,0.3)", "rgba(200,200,200,0.1)"] } },
         splitLine: { show: true, lineStyle: { type: "dashed", color: "#eee" } },
+        axisLabel: { show: true, fontSize: 10, formatter: (v: number) => v.toFixed(2) },
       },
       {
         type: "value",
