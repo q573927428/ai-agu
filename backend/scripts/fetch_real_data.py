@@ -468,11 +468,52 @@ def _safe_series_get(row, key: str) -> float | None:
         return None
 
 
-def _get_latest_trade_day_str() -> str:
-    """获取最近一个交易日，用于日频数据查询"""
-    from app.utils.date_utils import get_latest_trade_day
+def _get_recent_trade_days_str(n: int = 10) -> list[str]:
+    """获取最近N个交易日，用于日频数据回退查询"""
+    from app.utils.date_utils import get_latest_trade_day, is_trade_day
+    from datetime import timedelta
     latest = get_latest_trade_day()
-    return latest.strftime("%Y%m%d")
+    days = [latest]
+    current = latest - timedelta(days=1)
+    while len(days) < n:
+        if is_trade_day(current):
+            days.append(current)
+        current -= timedelta(days=1)
+    return [d.strftime("%Y%m%d") for d in days]
+
+
+def _fetch_last_valid_row(df: pd.DataFrame, field: str) -> pd.Series | None:
+    """从 DataFrame 倒序遍历，返回第一个指定字段非空的行"""
+    if df is None or df.empty:
+        return None
+    for i in range(len(df) - 1, -1, -1):
+        row = df.iloc[i]
+        if _safe_series_get(row, field) is not None:
+            return row
+    return None
+
+
+def _fetch_daily_with_fallback(api_func, start_date: str, field: str,
+                                recent_days: list[str], delay: float) -> pd.Series | None:
+    """日频数据回退查询：从最近交易日开始往前尝试，直到有数据为止"""
+    for day_str in recent_days:
+        _rate_limit(delay)
+        try:
+            func_name = api_func.__name__
+            if func_name == 'us_tycr':
+                # us_tycr 用 date= 参数
+                df = api_func(date=day_str)
+            elif func_name in ('shibor', 'moneyflow_hsgt'):
+                df = api_func(start_date=day_str, end_date=day_str)
+            else:
+                df = api_func(start_date=day_str, end_date=day_str)
+            if df is not None and not df.empty:
+                last = df.iloc[-1]
+                if _safe_series_get(last, field) is not None:
+                    return last
+        except Exception:
+            continue
+    return None
 
 
 def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
@@ -481,19 +522,19 @@ def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
     ## 设计原则
     - data_date = 最近交易日（作为当日宏观快照的唯一标识）
     - UPSERT 模式：如果该日记录已存在，则 UPDATE 所有字段（填充之前缺失的 NULL）
-    - 月/季度类数据（GDP/PMI/CPI等）取 Tushare 返回的最新一期
-    - 日频数据（SHIBOR/北向资金/美债）查最近交易日
+    - 月/季度类数据（GDP/PMI/CPI等）倒序取第一条非空行
+    - 日频数据（SHIBOR/北向资金/美债）回退查询最近10个交易日
     - 北向资金单位转换：Tushare 返回百万元 → 存储为亿元（/100）
     """
     try:
         logger.info("正在获取宏观经济数据 (Tushare Pro)...")
 
-        # 使用最近交易日作为 data_date（比 date.today() 更准确，避免非交易日无数据）
-        trade_day_str = _get_latest_trade_day_str()
+        # 最近10个交易日（用于日频数据回退查询）
+        recent_days = _get_recent_trade_days_str(10)
+        trade_day_str = recent_days[0]
         trade_day = datetime.strptime(trade_day_str, "%Y%m%d").date()
 
         # ========== UPSERT 策略 ==========
-        # 查找是否已有该日记录，有则 UPDATE，无则 INSERT
         existing = db.query(MacroData).filter(MacroData.data_date == trade_day).first()
         if existing:
             macro = existing
@@ -504,131 +545,103 @@ def fetch_macro_data(db: Session, delay: float = 0.1) -> bool:
             is_new = True
             logger.info(f"🆕 创建新记录 {trade_day}")
 
-        # ========== 1) GDP（季度数据，取最新一期）==========
+        # ========== 1) GDP（季度数据，取最新有效行）==========
         _rate_limit(delay)
         try:
             df = pro.cn_gdp()
-            if df is not None and not df.empty:
-                last = df.iloc[-1]
-                if _safe_series_get(last, "gdp_yoy") is not None:
-                    macro.gdp_yoy = _safe_series_get(last, "gdp_yoy")
-                    macro.gdp = _safe_series_get(last, "gdp")
-                    logger.info(f"  GDP同比: {macro.gdp_yoy}%")
+            row = _fetch_last_valid_row(df, "gdp_yoy")
+            if row is not None:
+                macro.gdp_yoy = _safe_series_get(row, "gdp_yoy")
+                macro.gdp = _safe_series_get(row, "gdp")
+                logger.info(f"  GDP同比: {macro.gdp_yoy}%")
         except Exception as e:
             logger.warning(f"  GDP获取失败: {e}")
 
-        # ========== 2) CPI（月度数据，取最新一期）==========
+        # ========== 2) CPI（月度数据，取最新有效行）==========
         _rate_limit(delay)
         try:
             df = pro.cn_cpi()
-            if df is not None and not df.empty:
-                last = df.iloc[-1]
-                if _safe_series_get(last, "nt_yoy") is not None:
-                    macro.cpi_yoy = _safe_series_get(last, "nt_yoy")
-                    macro.cpi_val = _safe_series_get(last, "nt_val")
-                    logger.info(f"  CPI同比: {macro.cpi_yoy}%")
+            row = _fetch_last_valid_row(df, "nt_yoy")
+            if row is not None:
+                macro.cpi_yoy = _safe_series_get(row, "nt_yoy")
+                macro.cpi_val = _safe_series_get(row, "nt_val")
+                logger.info(f"  CPI同比: {macro.cpi_yoy}%")
         except Exception as e:
             logger.warning(f"  CPI获取失败: {e}")
 
-        # ========== 3) PPI（月度数据，取最新一期）==========
+        # ========== 3) PPI（月度数据，取最新有效行）==========
         _rate_limit(delay)
         try:
             df = pro.cn_ppi()
-            if df is not None and not df.empty:
-                last = df.iloc[-1]
-                if _safe_series_get(last, "ppi_yoy") is not None:
-                    macro.ppi_yoy = _safe_series_get(last, "ppi_yoy")
-                    logger.info(f"  PPI同比: {macro.ppi_yoy}%")
+            row = _fetch_last_valid_row(df, "ppi_yoy")
+            if row is not None:
+                macro.ppi_yoy = _safe_series_get(row, "ppi_yoy")
+                logger.info(f"  PPI同比: {macro.ppi_yoy}%")
         except Exception as e:
             logger.warning(f"  PPI获取失败: {e}")
 
-        # ========== 4) PMI（月度数据，同时采集 pmi030000）==========
+        # ========== 4) PMI（月度数据，取最新有效行）==========
         _rate_limit(delay)
         try:
-            # 使用 fields 获取所有 PMI 子项：pmi030000=新口径制造业PMI
             df = pro.cn_pmi(fields='month,pmi030000')
-            if df is not None and not df.empty:
-                last = df.iloc[-1]
-                if _safe_series_get(last, "pmi030000") is not None:
-                    macro.pmi = _safe_series_get(last, "pmi030000")
-                    macro.pmi030000 = _safe_series_get(last, "pmi030000")
-                    logger.info(f"  制造业PMI(pmi030000): {macro.pmi}%")
+            row = _fetch_last_valid_row(df, "pmi030000")
+            if row is not None:
+                macro.pmi = _safe_series_get(row, "pmi030000")
+                macro.pmi030000 = _safe_series_get(row, "pmi030000")
+                logger.info(f"  制造业PMI(pmi030000): {macro.pmi}%")
         except Exception as e:
             logger.warning(f"  PMI获取失败: {e}")
 
-        # ========== 5) M2（月度数据，取最新一期）==========
+        # ========== 5) M2（月度数据，取最新有效行）==========
         _rate_limit(delay)
         try:
             df = pro.cn_m(fields='month,m2,m2_yoy')
-            if df is not None and not df.empty:
-                valid = df.dropna(subset=['m2_yoy'])
-                if not valid.empty:
-                    last = valid.iloc[-1]
-                    if _safe_series_get(last, "m2_yoy") is not None:
-                        macro.m2_yoy = _safe_series_get(last, "m2_yoy")
-                        logger.info(f"  M2同比: {macro.m2_yoy}%")
+            row = _fetch_last_valid_row(df, "m2_yoy")
+            if row is not None:
+                macro.m2_yoy = _safe_series_get(row, "m2_yoy")
+                logger.info(f"  M2同比: {macro.m2_yoy}%")
         except Exception as e:
             logger.warning(f"  M2获取失败: {e}")
 
-        # ========== 6) SHIBOR（日频，查交易日）==========
-        _rate_limit(delay)
-        try:
-            df = pro.shibor(start_date=trade_day_str, end_date=trade_day_str)
-            if df is not None and not df.empty:
-                last = df.iloc[-1]
-                if _safe_series_get(last, "on") is not None:
-                    macro.shibor_on = _safe_series_get(last, "on")
-                    macro.shibor_1w = _safe_series_get(last, "1w")
-                    macro.shibor_1m = _safe_series_get(last, "1m")
-                    macro.shibor_1y = _safe_series_get(last, "1y")
-                    logger.info(f"  SHIBOR隔夜: {macro.shibor_on}%, 1M: {macro.shibor_1m}%")
-        except Exception as e:
-            logger.warning(f"  Shibor获取失败: {e}")
+        # ========== 6) SHIBOR（日频，回退查询）==========
+        row = _fetch_daily_with_fallback(pro.shibor, trade_day_str, "on", recent_days, delay)
+        if row is not None:
+            macro.shibor_on = _safe_series_get(row, "on")
+            macro.shibor_1w = _safe_series_get(row, "1w")
+            macro.shibor_1m = _safe_series_get(row, "1m")
+            macro.shibor_1y = _safe_series_get(row, "1y")
+            logger.info(f"  SHIBOR隔夜: {macro.shibor_on}%, 1M: {macro.shibor_1m}%")
 
-        # ========== 7) 沪深港通（日频，查交易日；单位：百万元→亿元）==========
-        _rate_limit(delay)
-        try:
-            df = pro.moneyflow_hsgt(start_date=trade_day_str, end_date=trade_day_str)
-            if df is not None and not df.empty:
-                last = df.iloc[-1]
-                hgt_raw = _safe_series_get(last, "hgt")        # 百万元
-                sgt_raw = _safe_series_get(last, "sgt")        # 百万元
-                north_raw = _safe_series_get(last, "north_money")  # 百万元
-                if hgt_raw is not None:
-                    # Tushare 文档：hgt 单位为"百万元"，表定义单位为"亿元"（÷100）
-                    macro.hgt = round(hgt_raw / 100, 2)
-                    macro.sgt = round(sgt_raw / 100, 2) if sgt_raw is not None else None
-                    macro.north_flow = round(north_raw / 100, 2) if north_raw is not None else None
-                    logger.info(f"  沪股通: {macro.hgt:.2f}亿, 深股通: {macro.sgt:.2f}亿, 合计: {macro.north_flow:.2f}亿")
-        except Exception as e:
-            logger.warning(f"  沪深港通获取失败: {e}")
+        # ========== 7) 沪深港通（日频，回退查询；单位：百万元→亿元）==========
+        row = _fetch_daily_with_fallback(pro.moneyflow_hsgt, trade_day_str, "hgt", recent_days, delay)
+        if row is not None:
+            hgt_raw = _safe_series_get(row, "hgt")
+            sgt_raw = _safe_series_get(row, "sgt")
+            north_raw = _safe_series_get(row, "north_money")
+            if hgt_raw is not None:
+                macro.hgt = round(hgt_raw / 100, 2)
+                macro.sgt = round(sgt_raw / 100, 2) if sgt_raw is not None else None
+                macro.north_flow = round(north_raw / 100, 2) if north_raw is not None else None
+                logger.info(f"  沪股通: {macro.hgt:.2f}亿, 深股通: {macro.sgt:.2f}亿, 合计: {macro.north_flow:.2f}亿")
 
-        # ========== 8) 美国国债收益率（日频，查交易日）==========
-        _rate_limit(delay)
-        try:
-            df = pro.us_tycr(start_date=trade_day_str, end_date=trade_day_str)
-            if df is not None and not df.empty:
-                last = df.iloc[-1]
-                if _safe_series_get(last, "m3") is not None:
-                    macro.us_y3m = _safe_series_get(last, "m3")
-                    macro.us_y2y = _safe_series_get(last, "y2")
-                    macro.us_y10y = _safe_series_get(last, "y10")
-                    logger.info(f"  美国国债 3m: {macro.us_y3m}%, 2y: {macro.us_y2y}%, 10y: {macro.us_y10y}%")
-        except Exception as e:
-            logger.warning(f"  美国国债收益率获取失败: {e}")
+        # ========== 8) 美国国债收益率（日频，回退查询）==========
+        row = _fetch_daily_with_fallback(pro.us_tycr, trade_day_str, "m3", recent_days, delay)
+        if row is not None:
+            macro.us_y3m = _safe_series_get(row, "m3")
+            macro.us_y2y = _safe_series_get(row, "y2")
+            macro.us_y10y = _safe_series_get(row, "y10")
+            logger.info(f"  美国国债 3m: {macro.us_y3m}%, 2y: {macro.us_y2y}%, 10y: {macro.us_y10y}%")
 
-        # ========== 9) 社融（月度数据，取最新一期）==========
+        # ========== 9) 社融（月度数据，取最新有效行）==========
         _rate_limit(delay)
         try:
             df = pro.sf_month(fields='month,stk_endval')
-            if df is not None and not df.empty:
-                valid = df.dropna(subset=['stk_endval'])
-                if not valid.empty:
-                    last = valid.iloc[-1]
-                    val = _safe_series_get(last, "stk_endval")
-                    if val is not None:
-                        macro.margin_balance = round(val, 2)
-                        logger.info(f"  社融存量期末值: {macro.margin_balance}万亿元")
+            row = _fetch_last_valid_row(df, "stk_endval")
+            if row is not None:
+                val = _safe_series_get(row, "stk_endval")
+                if val is not None:
+                    macro.margin_balance = round(val, 2)
+                    logger.info(f"  社融存量期末值: {macro.margin_balance}万亿元")
         except Exception as e:
             logger.warning(f"  社融存量获取失败: {e}")
 
