@@ -206,7 +206,7 @@ const chartOption = computed(() => {
 <style scoped>
 .chart-container {
   width: 100%;
-  height: 520px;
+  height: 588px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -217,7 +217,7 @@ const chartOption = computed(() => {
 }
 @media (max-width: 900px) {
   .chart-container {
-    height: 400px;
+    height: 460px;
   }
 }
 </style>
