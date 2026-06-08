@@ -28,6 +28,7 @@ class Predictor:
             .filter(
                 ModelRecord.model_path.isnot(None),
                 ~ModelRecord.model_version.like("1d_model%"),
+                ModelRecord.is_active == 1,
             )
             .order_by(ModelRecord.id.desc())
             .limit(max_models)
@@ -55,13 +56,14 @@ class Predictor:
         logger.info(f"20日集成模型加载完成: {loaded_count} 个模型")
         return True
 
-    def _load_active_models_1d(self, max_models: int = 5):
+    def _load_active_models_1d(self, max_models: int = 3):
         """加载最近训练的1日预测模型"""
         records = (
             self.db.query(ModelRecord)
             .filter(
                 ModelRecord.model_path.isnot(None),
                 ModelRecord.model_version.like("1d_model%"),
+                ModelRecord.is_active == 1,
             )
             .order_by(ModelRecord.id.desc())
             .limit(max_models)
