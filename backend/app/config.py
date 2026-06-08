@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     model_dir: str = ""  # 在 __init__ 中设为绝对路径
     model_version: str = "v1.0"
 
+    # Tushare
+    tushare_token: str = "0c5fcf150b255ac8295383e5f0ba8fc96c0ab39fcd3e7718aa3a8f0b"
+
     # AkShare
     http_proxy: Optional[str] = ""
     https_proxy: Optional[str] = ""
