@@ -100,8 +100,12 @@ export function useApi() {
   /**
    * 分页获取所有股票列表
    */
-  async function fetchStockList(page: number = 1, pageSize: number = 10): Promise<ApiResponse<any>> {
-    return request<any>(`/api/v1/stocks/list?page=${page}&page_size=${pageSize}`);
+  async function fetchStockList(page: number = 1, pageSize: number = 10, sortBy?: string, sortOrder?: string): Promise<ApiResponse<any>> {
+    let url = `/api/v1/stocks/list?page=${page}&page_size=${pageSize}`;
+    if (sortBy) {
+      url += `&sort_by=${sortBy}&sort_order=${sortOrder || "asc"}`;
+    }
+    return request<any>(url);
   }
 
   return {

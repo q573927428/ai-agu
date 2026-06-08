@@ -67,78 +67,113 @@ class StockService:
         )
         return [r.to_dict() for r in records]
 
-    def list_stocks(self, page: int = 1, page_size: int = 10) -> tuple:
+    def list_stocks(self, page: int = 1, page_size: int = 10, sort_by: Optional[str] = None, sort_order: str = "asc") -> tuple:
         """分页获取所有股票列表（含最新行情和估值数据）"""
         from app.models.factor import FactorStore
-        from sqlalchemy import func
+        from sqlalchemy import func, case, asc, desc
 
-        # 1. 分页查询股票基础信息
-        query = self.db.query(StockBasic).filter(StockBasic.is_active == 1).order_by(StockBasic.stock_code)
-        total = query.count()
-        items = query.offset((page - 1) * page_size).limit(page_size).all()
-
-        codes = [s.stock_code for s in items]
         exchange_map = {
             "SSE": "SH",
             "SZSE": "SZ",
             "BSE": "BJ",
         }
 
-        daily_map = {}
-        factor_map = {}
+        # 1. 基础查询（用于 count）
+        total = self.db.query(func.count(StockBasic.stock_code)).filter(StockBasic.is_active == 1).scalar()
 
-        if codes:
-            # 2. 子查询：每个股票代码的最新交易日
-            latest_daily_sub = (
-                self.db.query(
-                    StockDaily.stock_code,
-                    func.max(StockDaily.trade_date).label("max_date")
-                )
-                .filter(StockDaily.stock_code.in_(codes))
-                .group_by(StockDaily.stock_code)
-                .subquery()
+        # 2. 构建排序子查询：先排序分页获取 stock_code
+        # 子查询：每个股票代码的最新交易日
+        latest_daily_sub = (
+            self.db.query(
+                StockDaily.stock_code,
+                func.max(StockDaily.trade_date).label("max_date")
             )
-
-            # 3. 关联查询最新日行情（只需返回列，不用取所有行再 Python 去重）
-            daily_rows = (
-                self.db.query(StockDaily)
-                .join(
-                    latest_daily_sub,
-                    (StockDaily.stock_code == latest_daily_sub.c.stock_code)
-                    & (StockDaily.trade_date == latest_daily_sub.c.max_date)
-                )
-                .all()
+            .group_by(StockDaily.stock_code)
+            .subquery()
+        )
+        # 子查询：每个股票代码的最新因子交易日
+        latest_factor_sub = (
+            self.db.query(
+                FactorStore.stock_code,
+                func.max(FactorStore.trade_date).label("max_date")
             )
-            daily_map = {d.stock_code: d for d in daily_rows}
+            .group_by(FactorStore.stock_code)
+            .subquery()
+        )
 
-            # 4. 子查询：每个股票代码的最新因子交易日
-            latest_factor_sub = (
-                self.db.query(
-                    FactorStore.stock_code,
-                    func.max(FactorStore.trade_date).label("max_date")
-                )
-                .filter(FactorStore.stock_code.in_(codes))
-                .group_by(FactorStore.stock_code)
-                .subquery()
+        # 排序子查询（只查 stock_code + 排序 + 分页）
+        sort_subq = self.db.query(StockBasic.stock_code.label("sc")).filter(StockBasic.is_active == 1)
+
+        if sort_by in ("close_price", "pct_chg"):
+            sort_subq = sort_subq.outerjoin(
+                latest_daily_sub,
+                StockBasic.stock_code == latest_daily_sub.c.stock_code
+            ).outerjoin(
+                StockDaily,
+                (StockDaily.stock_code == latest_daily_sub.c.stock_code)
+                & (StockDaily.trade_date == latest_daily_sub.c.max_date)
             )
-
-            # 5. 关联查询最新因子数据
-            factor_rows = (
-                self.db.query(FactorStore)
-                .join(
-                    latest_factor_sub,
-                    (FactorStore.stock_code == latest_factor_sub.c.stock_code)
-                    & (FactorStore.trade_date == latest_factor_sub.c.max_date)
-                )
-                .all()
+            sort_col = StockDaily.close if sort_by == "close_price" else StockDaily.pct_chg
+            order_func = asc if sort_order == "asc" else desc
+            nulls_last = case((sort_col.is_(None), 1), else_=0)
+            sort_subq = sort_subq.order_by(nulls_last, order_func(sort_col), StockBasic.stock_code)
+        elif sort_by in ("pe_ttm", "pb", "turnover_rate"):
+            sort_subq = sort_subq.outerjoin(
+                latest_factor_sub,
+                StockBasic.stock_code == latest_factor_sub.c.stock_code
+            ).outerjoin(
+                FactorStore,
+                (FactorStore.stock_code == latest_factor_sub.c.stock_code)
+                & (FactorStore.trade_date == latest_factor_sub.c.max_date)
             )
-            factor_map = {f.stock_code: f for f in factor_rows}
+            col_map = {
+                "pe_ttm": FactorStore.stock_pe_ttm,
+                "pb": FactorStore.stock_pb,
+                "turnover_rate": FactorStore.stock_turnover_rate_5d,
+            }
+            sort_col = col_map[sort_by]
+            order_func = asc if sort_order == "asc" else desc
+            nulls_last = case((sort_col.is_(None), 1), else_=0)
+            sort_subq = sort_subq.order_by(nulls_last, order_func(sort_col), StockBasic.stock_code)
+        else:
+            sort_subq = sort_subq.order_by(StockBasic.stock_code)
 
-        # 6. 组装返回数据
+        # 转为子查询（含 limit/offset）
+        sort_subq = sort_subq.offset((page - 1) * page_size).limit(page_size).subquery()
+
+        # 3. 一次性 JOIN 获取完整数据 + 最新行情 + 最新因子（单次查询）
+        enriched_query = (
+            self.db.query(
+                StockBasic,
+                StockDaily,
+                FactorStore,
+            )
+            .join(sort_subq, StockBasic.stock_code == sort_subq.c.sc)
+            .outerjoin(
+                latest_daily_sub,
+                StockBasic.stock_code == latest_daily_sub.c.stock_code
+            )
+            .outerjoin(
+                StockDaily,
+                (StockDaily.stock_code == latest_daily_sub.c.stock_code)
+                & (StockDaily.trade_date == latest_daily_sub.c.max_date)
+            )
+            .outerjoin(
+                latest_factor_sub,
+                StockBasic.stock_code == latest_factor_sub.c.stock_code
+            )
+            .outerjoin(
+                FactorStore,
+                (FactorStore.stock_code == latest_factor_sub.c.stock_code)
+                & (FactorStore.trade_date == latest_factor_sub.c.max_date)
+            )
+        )
+
+        rows = enriched_query.all()
+
+        # 4. 组装返回数据
         enriched = []
-        for s in items:
-            daily = daily_map.get(s.stock_code)
-            factor = factor_map.get(s.stock_code)
+        for s, daily, factor in rows:
             exchange_tag = exchange_map.get(s.exchange, s.exchange)
             enriched.append({
                 "stock_code": s.stock_code,

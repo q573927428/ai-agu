@@ -11,10 +11,16 @@ router = APIRouter(prefix="/stocks", tags=["股票"])
 
 
 @router.get("/list")
-def list_stocks(page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=100), db: Session = Depends(get_db)) -> ApiResponse:
+def list_stocks(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    sort_by: Optional[str] = Query(None, description="排序字段：close_price, pct_chg, pe_ttm, pb, turnover_rate, stock_code"),
+    sort_order: Optional[str] = Query("asc", description="排序方向：asc 升序, desc 降序"),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
     """分页获取所有股票列表（含最新行情和估值数据）"""
     service = StockService(db)
-    items, total = service.list_stocks(page, page_size)
+    items, total = service.list_stocks(page, page_size, sort_by, sort_order)
     return ApiResponse(data={
         "items": items,
         "total": total,
