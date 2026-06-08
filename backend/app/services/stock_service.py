@@ -45,13 +45,16 @@ class StockService:
 
     def get_stock_daily_history(self, stock_code: str, limit: int = 120) -> list:
         """获取股票日K线历史数据（用于绘制K线图）"""
-        return (
+        records = (
             self.db.query(StockDaily)
             .filter(StockDaily.stock_code == stock_code)
-            .order_by(StockDaily.trade_date.asc())
+            .order_by(StockDaily.trade_date.desc())
             .limit(limit)
             .all()
         )
+        # 按日期升序返回（K线图需要从左到右从旧到新）
+        records.reverse()
+        return records
 
     def get_stock_detail(self, stock_code: str) -> dict:
         """获取股票详情"""
