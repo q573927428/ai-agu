@@ -6,7 +6,6 @@ from datetime import datetime, date
 from typing import Optional, Dict, Any, List
 from loguru import logger
 from sqlalchemy.orm import Session
-from sklearn.model_selection import train_test_split
 from app.ml.model import LightGBMModel
 from app.models.factor import FactorStore
 from app.models.model_record import ModelRecord
@@ -14,90 +13,101 @@ from app.models.stock_daily import StockDaily
 from app.config import settings
 
 
+# 单日收益率噪声和极端涨跌停会显著放大回归模型过拟合，训练前先做温和去极值。
+LABEL_CLIP_QUANTILE = 0.01
+MIN_TRAIN_DATES = 20
+
+
 # ============ 多模型集成训练的异构超参数配置（次日预测） ============
 ENSEMBLE_PARAMS: List[Dict[str, Any]] = [
     {
-        # 模型A: 默认主模型
-        "objective": "regression",
-        "metric": "rmse",
-        "boosting_type": "gbdt",
-        "num_leaves": 31,
-        "max_depth": 7,
-        "learning_rate": 0.05,
-        "feature_fraction": 0.8,
-        "bagging_fraction": 0.8,
-        "bagging_freq": 5,
-        "min_child_samples": 20,
-        "reg_alpha": 0.1,
-        "reg_lambda": 0.1,
-        "verbose": -1,
-        "random_state": 42,
-    },
-    {
-        # 模型B: 更浅的树 + 更高学习率
-        "objective": "regression",
-        "metric": "rmse",
-        "boosting_type": "gbdt",
-        "num_leaves": 15,
-        "max_depth": 5,
-        "learning_rate": 0.08,
-        "feature_fraction": 0.7,
-        "bagging_fraction": 0.7,
-        "bagging_freq": 3,
-        "min_child_samples": 30,
-        "reg_alpha": 0.2,
-        "reg_lambda": 0.3,
-        "verbose": -1,
-        "random_state": 100,
-    },
-    {
-        # 模型C: 更深 + dropout-like 正则
-        "objective": "regression",
-        "metric": "rmse",
-        "boosting_type": "gbdt",
-        "num_leaves": 63,
-        "max_depth": 10,
-        "learning_rate": 0.03,
-        "feature_fraction": 0.6,
-        "bagging_fraction": 0.6,
-        "bagging_freq": 7,
-        "min_child_samples": 10,
-        "reg_alpha": 0.5,
-        "reg_lambda": 0.5,
-        "verbose": -1,
-        "random_state": 7,
-    },
-    {
-        # 模型D: 随机森林模式
-        "objective": "regression",
-        "metric": "rmse",
-        "boosting_type": "rf",
-        "num_leaves": 31,
-        "max_depth": 7,
-        "learning_rate": 0.05,
-        "feature_fraction": 0.8,
-        "bagging_fraction": 0.8,
-        "bagging_freq": 1,
-        "min_child_samples": 20,
-        "reg_alpha": 0.1,
-        "reg_lambda": 0.1,
-        "verbose": -1,
-        "random_state": 2024,
-    },
-    {
-        # 模型E: 更保守的梯度提升
+        # 模型A: 稳健主模型，降低叶子数并加强L2，适合高噪声次日收益预测
         "objective": "regression",
         "metric": "rmse",
         "boosting_type": "gbdt",
         "num_leaves": 23,
         "max_depth": 6,
-        "learning_rate": 0.04,
-        "feature_fraction": 0.5,
-        "bagging_fraction": 0.75,
-        "bagging_freq": 4,
-        "min_child_samples": 25,
-        "reg_alpha": 1.0,
+        "learning_rate": 0.035,
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 5,
+        "min_child_samples": 80,
+        "min_split_gain": 0.01,
+        "reg_alpha": 0.3,
         "reg_lambda": 2.0,
+        "verbose": -1,
+        "random_state": 42,
+    },
+    {
+        # 模型B: 浅树强正则，偏低方差
+        "objective": "regression",
+        "metric": "rmse",
+        "boosting_type": "gbdt",
+        "num_leaves": 19,
+        "max_depth": 5,
+        "learning_rate": 0.04,
+        "feature_fraction": 0.78,
+        "bagging_fraction": 0.78,
+        "bagging_freq": 3,
+        "min_child_samples": 70,
+        "min_split_gain": 0.01,
+        "reg_alpha": 0.3,
+        "reg_lambda": 2.0,
+        "verbose": -1,
+        "random_state": 100,
+    },
+    {
+        # 模型C: extra_trees 增加随机切分，保留早停能力并提升集成多样性
+        "objective": "regression",
+        "metric": "rmse",
+        "boosting_type": "gbdt",
+        "num_leaves": 31,
+        "max_depth": 7,
+        "learning_rate": 0.03,
+        "feature_fraction": 0.65,
+        "bagging_fraction": 0.7,
+        "bagging_freq": 5,
+        "min_child_samples": 100,
+        "extra_trees": True,
+        "min_split_gain": 0.01,
+        "reg_alpha": 0.8,
+        "reg_lambda": 4.0,
+        "verbose": -1,
+        "random_state": 7,
+    },
+    {
+        # 模型D: GOSS采样关注梯度较大的样本，替代RMSE偏弱的RF子模型
+        "objective": "regression",
+        "metric": "rmse",
+        "boosting_type": "goss",
+        "num_leaves": 23,
+        "max_depth": 6,
+        "learning_rate": 0.035,
+        "feature_fraction": 0.75,
+        "top_rate": 0.2,
+        "other_rate": 0.1,
+        "min_child_samples": 80,
+        "min_split_gain": 0.01,
+        "reg_alpha": 0.5,
+        "reg_lambda": 2.5,
+        "verbose": -1,
+        "random_state": 2024,
+    },
+    {
+        # 模型E: 保守强正则，更多特征/样本随机性
+        "objective": "regression",
+        "metric": "rmse",
+        "boosting_type": "gbdt",
+        "num_leaves": 23,
+        "max_depth": 5,
+        "learning_rate": 0.035,
+        "feature_fraction": 0.68,
+        "bagging_fraction": 0.72,
+        "bagging_freq": 4,
+        "min_child_samples": 90,
+        "min_split_gain": 0.01,
+        "reg_alpha": 0.8,
+        "reg_lambda": 3.5,
         "verbose": -1,
         "random_state": 888,
     },
@@ -109,6 +119,36 @@ class Trainer:
 
     def __init__(self, db: Session):
         self.db = db
+
+    def _sanitize_features(self, df: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame:
+        """训练前特征清洗：处理NaN/Inf，并按列做温和去极值，降低异常因子影响。"""
+        X = df[feature_cols].copy()
+        X = X.replace([np.inf, -np.inf], np.nan)
+
+        for col in feature_cols:
+            median = X[col].median()
+            X[col] = X[col].fillna(0.0 if pd.isna(median) else median)
+
+            lower = X[col].quantile(0.01)
+            upper = X[col].quantile(0.99)
+            if np.isfinite(lower) and np.isfinite(upper) and lower < upper:
+                X[col] = X[col].clip(lower, upper)
+
+        return X.astype(float)
+
+    def _clip_labels(self, y: pd.Series) -> pd.Series:
+        """对次日收益率标签做分位数去极值，避免极端涨跌幅主导RMSE优化。"""
+        y = y.astype(float).replace([np.inf, -np.inf], np.nan).dropna()
+        if y.empty:
+            return y
+
+        lower = y.quantile(LABEL_CLIP_QUANTILE)
+        upper = y.quantile(1 - LABEL_CLIP_QUANTILE)
+        if np.isfinite(lower) and np.isfinite(upper) and lower < upper:
+            clipped = y.clip(lower, upper)
+            logger.info(f"标签去极值: [{lower:.4f}, {upper:.4f}], 原始样本 {len(y)} 条")
+            return clipped
+        return y
 
     def prepare_training_data(self, start_date: str, end_date: str) -> tuple:
         """准备训练数据（分批加载 + 预计算标签，避免内存溢出和慢查询）"""
@@ -160,7 +200,11 @@ class Trainer:
                 }
                 for col_name in factor_col_names:
                     val = getattr(f, col_name)
-                    record[col_name] = float(val) if val is not None else 0.0
+                    try:
+                        num_val = float(val) if val is not None else 0.0
+                    except (TypeError, ValueError):
+                        num_val = 0.0
+                    record[col_name] = num_val if np.isfinite(num_val) else 0.0
                 records.append(record)
 
             if not records:
@@ -193,20 +237,32 @@ class Trainer:
         # 特征列（排除非因子列）
         feature_cols = [c for c in df.columns if c not in ("stock_code", "trade_date", "future_return_1d")]
 
-        X = df[feature_cols]
-        y = df["future_return_1d"]
+        X = self._sanitize_features(df, feature_cols)
+        y = self._clip_labels(df["future_return_1d"])
+        df = df.loc[y.index]
+        X = X.loc[y.index]
 
         # 按时间分割
         unique_dates = sorted(df["trade_date"].unique())
-        split_idx = int(len(unique_dates) * 0.7)
+        if len(unique_dates) < 3:
+            logger.warning(f"有效交易日过少，无法进行时间序列验证: {len(unique_dates)} 天")
+            return None, None, None, None
+
+        split_idx = int(len(unique_dates) * 0.75)
+        split_idx = min(max(split_idx, 1), len(unique_dates) - 1)
+        if split_idx < MIN_TRAIN_DATES and len(unique_dates) > MIN_TRAIN_DATES:
+            split_idx = MIN_TRAIN_DATES
         train_dates = unique_dates[:split_idx]
-        valid_dates = unique_dates[split_idx:]
 
         train_mask = df["trade_date"].isin(train_dates)
         X_train = X[train_mask]
         y_train = y[train_mask]
         X_valid = X[~train_mask]
         y_valid = y[~train_mask]
+
+        if X_train.empty or X_valid.empty:
+            logger.warning(f"训练/验证数据为空: train={len(X_train)}, valid={len(X_valid)}")
+            return None, None, None, None
 
         logger.info(f"训练数据: {len(X_train)} 条, 验证数据: {len(X_valid)} 条, 特征: {len(feature_cols)} 个")
         return X_train, y_train, X_valid, y_valid
@@ -434,6 +490,9 @@ class Trainer:
             "valid_ic_std": float(np.std(ics)),
             "note": "multi-model ensemble",
         }
+
+
+
 
 
 
