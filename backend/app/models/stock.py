@@ -1,5 +1,5 @@
 """股票基础信息表 — 基于Tushare Pro stock_basic接口完整字段"""
-from sqlalchemy import Column, String, Enum, Date, Integer, DateTime
+from sqlalchemy import Column, String, Enum, Date, Integer, DateTime, DECIMAL
 from sqlalchemy.sql import func
 from .base import Base
 
@@ -31,6 +31,14 @@ class StockBasic(Base):
     # ── 实控人 ──
     act_name = Column(String(100), comment="实控人名称")
     act_ent_type = Column(String(50), comment="实控人企业性质")
+
+    # ── 最新行情快照（流水线/拉取数据时更新） ──
+    trade_date = Column(Date, comment="最新行情日期")
+    close_price = Column(DECIMAL(12, 3), comment="最新收盘价")
+    pct_chg = Column(DECIMAL(12, 6), comment="最新涨跌幅(%)")
+    pe_ttm = Column(DECIMAL(12, 6), comment="最新滚动市盈率(PE-TTM)")
+    pb = Column(DECIMAL(12, 6), comment="最新市净率(PB)")
+    turnover_rate = Column(DECIMAL(12, 6), comment="最新换手率(%)")
 
     # ── 系统字段 ──
     is_active = Column(Integer, default=1, comment="是否活跃")

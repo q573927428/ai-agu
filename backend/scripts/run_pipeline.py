@@ -123,6 +123,22 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
             engine.save_factors(df)
         logger.info(f"✅ 因子计算完成: {len(df)} 只股票")
 
+        # Step 1.5: 同步 PE/PB/换手率到 stock_basic 快照字段
+        if not df.empty:
+            from app.models.stock import StockBasic as SB
+            logger.info("[1.5/5] 同步估值数据到 stock_basic...")
+            for _, row in df.iterrows():
+                code = row.get("stock_code")
+                if not code:
+                    continue
+                db.query(SB).filter(SB.stock_code == code).update({
+                    "pe_ttm": float(row["stock_pe_ttm"]) if pd.notna(row.get("stock_pe_ttm")) else None,
+                    "pb": float(row["stock_pb"]) if pd.notna(row.get("stock_pb")) else None,
+                    "turnover_rate": float(row["stock_turnover_rate_5d"]) if pd.notna(row.get("stock_turnover_rate_5d")) else None,
+                })
+            db.commit()
+            logger.info(f"✅ stock_basic 估值数据同步完成: {len(df)} 只股票")
+
         # Step 2: 标签生成
         logger.info("[2/5] 生成标签...")
         label_gen = LabelGenerator(db)

@@ -68,9 +68,12 @@ class StockService:
         return [r.to_dict() for r in records]
 
     def list_stocks(self, page: int = 1, page_size: int = 10, sort_by: Optional[str] = None, sort_order: str = "asc") -> tuple:
-        """分页获取所有股票列表（含最新行情和估值数据）"""
-        from app.models.factor import FactorStore
-        from sqlalchemy import func, case, asc, desc
+        """分页获取所有股票列表（含最新行情和估值数据）
+
+        直接从 stock_basic 表读取最新行情快照，
+        不需要再 JOIN stock_daily 和 factor_store 表。
+        """
+        from sqlalchemy import asc, desc, case
 
         exchange_map = {
             "SSE": "SH",
@@ -78,102 +81,33 @@ class StockService:
             "BSE": "BJ",
         }
 
-        # 1. 基础查询（用于 count）
-        total = self.db.query(func.count(StockBasic.stock_code)).filter(StockBasic.is_active == 1).scalar()
+        # 1. 基础查询
+        query = self.db.query(StockBasic).filter(StockBasic.is_active == 1)
+        total = query.count()
 
-        # 2. 构建排序子查询：先排序分页获取 stock_code
-        # 子查询：每个股票代码的最新交易日
-        latest_daily_sub = (
-            self.db.query(
-                StockDaily.stock_code,
-                func.max(StockDaily.trade_date).label("max_date")
-            )
-            .group_by(StockDaily.stock_code)
-            .subquery()
-        )
-        # 子查询：每个股票代码的最新因子交易日
-        latest_factor_sub = (
-            self.db.query(
-                FactorStore.stock_code,
-                func.max(FactorStore.trade_date).label("max_date")
-            )
-            .group_by(FactorStore.stock_code)
-            .subquery()
-        )
+        # 2. 排序
+        sort_col_map = {
+            "close_price": StockBasic.close_price,
+            "pct_chg": StockBasic.pct_chg,
+            "pe_ttm": StockBasic.pe_ttm,
+            "pb": StockBasic.pb,
+            "turnover_rate": StockBasic.turnover_rate,
+        }
+        order_func = asc if sort_order == "asc" else desc
 
-        # 排序子查询（只查 stock_code + 排序 + 分页）
-        sort_subq = self.db.query(StockBasic.stock_code.label("sc")).filter(StockBasic.is_active == 1)
-
-        if sort_by in ("close_price", "pct_chg"):
-            sort_subq = sort_subq.outerjoin(
-                latest_daily_sub,
-                StockBasic.stock_code == latest_daily_sub.c.stock_code
-            ).outerjoin(
-                StockDaily,
-                (StockDaily.stock_code == latest_daily_sub.c.stock_code)
-                & (StockDaily.trade_date == latest_daily_sub.c.max_date)
-            )
-            sort_col = StockDaily.close if sort_by == "close_price" else StockDaily.pct_chg
-            order_func = asc if sort_order == "asc" else desc
-            nulls_last = case((sort_col.is_(None), 1), else_=0)
-            sort_subq = sort_subq.order_by(nulls_last, order_func(sort_col), StockBasic.stock_code)
-        elif sort_by in ("pe_ttm", "pb", "turnover_rate"):
-            sort_subq = sort_subq.outerjoin(
-                latest_factor_sub,
-                StockBasic.stock_code == latest_factor_sub.c.stock_code
-            ).outerjoin(
-                FactorStore,
-                (FactorStore.stock_code == latest_factor_sub.c.stock_code)
-                & (FactorStore.trade_date == latest_factor_sub.c.max_date)
-            )
-            col_map = {
-                "pe_ttm": FactorStore.stock_pe_ttm,
-                "pb": FactorStore.stock_pb,
-                "turnover_rate": FactorStore.stock_turnover_rate_5d,
-            }
-            sort_col = col_map[sort_by]
-            order_func = asc if sort_order == "asc" else desc
-            nulls_last = case((sort_col.is_(None), 1), else_=0)
-            sort_subq = sort_subq.order_by(nulls_last, order_func(sort_col), StockBasic.stock_code)
+        if sort_by in sort_col_map:
+            col = sort_col_map[sort_by]
+            nulls_last = case((col.is_(None), 1), else_=0)
+            query = query.order_by(nulls_last, order_func(col), StockBasic.stock_code)
         else:
-            sort_subq = sort_subq.order_by(StockBasic.stock_code)
+            query = query.order_by(StockBasic.stock_code)
 
-        # 转为子查询（含 limit/offset）
-        sort_subq = sort_subq.offset((page - 1) * page_size).limit(page_size).subquery()
+        # 3. 分页
+        rows = query.offset((page - 1) * page_size).limit(page_size).all()
 
-        # 3. 一次性 JOIN 获取完整数据 + 最新行情 + 最新因子（单次查询）
-        enriched_query = (
-            self.db.query(
-                StockBasic,
-                StockDaily,
-                FactorStore,
-            )
-            .join(sort_subq, StockBasic.stock_code == sort_subq.c.sc)
-            .outerjoin(
-                latest_daily_sub,
-                StockBasic.stock_code == latest_daily_sub.c.stock_code
-            )
-            .outerjoin(
-                StockDaily,
-                (StockDaily.stock_code == latest_daily_sub.c.stock_code)
-                & (StockDaily.trade_date == latest_daily_sub.c.max_date)
-            )
-            .outerjoin(
-                latest_factor_sub,
-                StockBasic.stock_code == latest_factor_sub.c.stock_code
-            )
-            .outerjoin(
-                FactorStore,
-                (FactorStore.stock_code == latest_factor_sub.c.stock_code)
-                & (FactorStore.trade_date == latest_factor_sub.c.max_date)
-            )
-        )
-
-        rows = enriched_query.all()
-
-        # 4. 组装返回数据
+        # 4. 组装返回
         enriched = []
-        for s, daily, factor in rows:
+        for s in rows:
             exchange_tag = exchange_map.get(s.exchange, s.exchange)
             enriched.append({
                 "stock_code": s.stock_code,
@@ -182,11 +116,12 @@ class StockService:
                 "area": s.area,
                 "exchange": exchange_tag,
                 "list_date": str(s.list_date) if s.list_date else None,
-                "close_price": float(daily.close) if daily and daily.close else None,
-                "pct_chg": float(daily.pct_chg) if daily and daily.pct_chg else None,
-                "pe_ttm": float(factor.stock_pe_ttm) if factor and factor.stock_pe_ttm is not None else None,
-                "pb": float(factor.stock_pb) if factor and factor.stock_pb is not None else None,
-                "turnover_rate": float(factor.stock_turnover_rate_5d) if factor and factor.stock_turnover_rate_5d is not None else None,
+                "trade_date": str(s.trade_date) if s.trade_date else None,
+                "close_price": float(s.close_price) if s.close_price is not None else None,
+                "pct_chg": float(s.pct_chg) if s.pct_chg is not None else None,
+                "pe_ttm": float(s.pe_ttm) if s.pe_ttm is not None else None,
+                "pb": float(s.pb) if s.pb is not None else None,
+                "turnover_rate": float(s.turnover_rate) if s.turnover_rate is not None else None,
             })
         return enriched, total
 
@@ -201,3 +136,20 @@ class StockService:
             "latest_daily": daily,
             "latest_prediction": prediction,
         }
+
+    def update_latest_snapshot(self, stock_code: str, trade_date: date,
+                               close_price: Optional[float] = None,
+                               pct_chg: Optional[float] = None,
+                               pe_ttm: Optional[float] = None,
+                               pb: Optional[float] = None,
+                               turnover_rate: Optional[float] = None) -> None:
+        """更新股票最新行情快照到 stock_basic 表"""
+        self.db.query(StockBasic).filter(StockBasic.stock_code == stock_code).update({
+            "trade_date": trade_date,
+            "close_price": close_price,
+            "pct_chg": pct_chg,
+            "pe_ttm": pe_ttm,
+            "pb": pb,
+            "turnover_rate": turnover_rate,
+        })
+        self.db.commit()

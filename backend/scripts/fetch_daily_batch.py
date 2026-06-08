@@ -22,10 +22,11 @@ import pandas as pd
 import numpy as np
 from decimal import Decimal
 from loguru import logger
-from sqlalchemy import text
+from sqlalchemy import text, func
 
 from app.utils.db_utils import SessionLocal, engine
 from app.models.stock_daily import StockDaily
+from app.models.stock import StockBasic
 from app.models.base import Base
 from app.utils.date_utils import is_trade_day, get_latest_trade_day
 
@@ -240,6 +241,57 @@ def fetch_one_day(trade_date_str: str, delay: float = 0.3) -> int:
     return written
 
 
+def sync_stock_basic_snapshot(trade_date_obj: date):
+    """将指定交易日的最新收盘价和涨跌幅同步到 stock_basic 表（仅当该日期是最新交易日时）"""
+    session = SessionLocal()
+    try:
+        # 查询该日期是否是这个股票的最新交易日
+        latest_sub = (
+            session.query(
+                StockDaily.stock_code,
+                func.max(StockDaily.trade_date).label("max_date")
+            )
+            .filter(StockDaily.trade_date <= trade_date_obj)
+            .group_by(StockDaily.stock_code)
+            .subquery()
+        )
+        rows = (
+            session.query(
+                StockDaily.stock_code,
+                StockDaily.trade_date,
+                StockDaily.close,
+                StockDaily.pct_chg,
+            )
+            .join(
+                latest_sub,
+                (StockDaily.stock_code == latest_sub.c.stock_code)
+                & (StockDaily.trade_date == latest_sub.c.max_date)
+            )
+            .all()
+        )
+
+        updated = 0
+        for r in rows:
+            result = session.query(StockBasic).filter(StockBasic.stock_code == r.stock_code).update({
+                "trade_date": r.trade_date,
+                "close_price": r.close,
+                "pct_chg": r.pct_chg,
+            })
+            if result:
+                updated += 1
+
+        session.commit()
+        if updated > 0:
+            logger.info(f"  ✅ stock_basic 快照更新: {updated} 只股票")
+        return updated
+    except Exception as e:
+        session.rollback()
+        logger.warning(f"  ⚠️ stock_basic 快照同步失败: {e}")
+        return 0
+    finally:
+        session.close()
+
+
 def get_trade_dates(start_date: date, end_date: date) -> list:
     """获取日期区间内的交易日列表"""
     trade_dates = []
@@ -325,6 +377,12 @@ def main():
         elapsed = time.time() - start_time
         pct = (i + 1) / len(dates) * 100
         logger.info(f"  📊 进度: {i+1}/{len(dates)} ({pct:.1f}%) | 已写入 {total_written} 条 | 耗时 {elapsed:.1f}s")
+
+    # 同步最新交易日数据到 stock_basic 快照字段
+    if dates:
+        latest_date = max(dates)
+        logger.info(f"📸 同步最新交易日 {latest_date} 行情到 stock_basic 快照字段...")
+        sync_stock_basic_snapshot(latest_date)
 
     elapsed = time.time() - start_time
     logger.info(f"\n{'='*60}")

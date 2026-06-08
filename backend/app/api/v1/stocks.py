@@ -5,6 +5,7 @@ from typing import Optional, List
 from datetime import date
 from app.api.deps import get_db
 from app.services.stock_service import StockService
+from app.models.stock import StockBasic
 from app.schemas.stock import StockBasicResponse, StockDetailResponse, ApiResponse
 
 router = APIRouter(prefix="/stocks", tags=["股票"])
@@ -48,42 +49,35 @@ def search_stocks(keyword: str = Query(..., min_length=1), db: Session = Depends
 
 @router.get("/{code}")
 def get_stock_detail(code: str, db: Session = Depends(get_db)) -> ApiResponse:
-    """获取股票详情"""
+    """获取股票详情（最新行情直接从 stock_basic 表获取）"""
     service = StockService(db)
     detail = service.get_stock_detail(code)
     if not detail["basic"]:
         return ApiResponse(code=404, data=None, message="股票不存在")
 
-    # 从因子表获取 pe_ttm/pb/turnover_rate
-    from app.models.factor import FactorStore
-    factors = (
-        db.query(FactorStore)
-        .filter(FactorStore.stock_code == code)
-        .order_by(FactorStore.trade_date.desc())
-        .first()
-    )
+    basic: StockBasic = detail["basic"]
 
     return ApiResponse(data={
         "basic": {
-            "stock_code": detail["basic"].stock_code,
-            "stock_name": detail["basic"].stock_name,
-            "industry": detail["basic"].industry,
-            "area": detail["basic"].area,
-            "market": detail["basic"].market,
-            "list_date": str(detail["basic"].list_date) if detail["basic"].list_date else None,
+            "stock_code": basic.stock_code,
+            "stock_name": basic.stock_name,
+            "industry": basic.industry,
+            "area": basic.area,
+            "market": basic.market,
+            "list_date": str(basic.list_date) if basic.list_date else None,
         },
         "latest_daily": {
-            "close": float(detail["latest_daily"].close) if detail["latest_daily"] else None,
+            "close": float(basic.close_price) if basic.close_price is not None else None,
             "open": float(detail["latest_daily"].open) if detail["latest_daily"] else None,
             "high": float(detail["latest_daily"].high) if detail["latest_daily"] else None,
             "low": float(detail["latest_daily"].low) if detail["latest_daily"] else None,
             "pre_close": float(detail["latest_daily"].pre_close) if detail["latest_daily"] else None,
             "volume": int(detail["latest_daily"].volume) if detail["latest_daily"] else None,
             "amount": float(detail["latest_daily"].amount) if detail["latest_daily"] else None,
-            "pct_chg": float(detail["latest_daily"].pct_chg) if detail["latest_daily"] else None,
-            "pe_ttm": float(factors.stock_pe_ttm) if factors and factors.stock_pe_ttm is not None else None,
-            "pb": float(factors.stock_pb) if factors and factors.stock_pb is not None else None,
-            "turnover_rate": float(factors.stock_turnover_rate_5d) if factors and factors.stock_turnover_rate_5d is not None else None,
+            "pct_chg": float(basic.pct_chg) if basic.pct_chg is not None else None,
+            "pe_ttm": float(basic.pe_ttm) if basic.pe_ttm is not None else None,
+            "pb": float(basic.pb) if basic.pb is not None else None,
+            "turnover_rate": float(basic.turnover_rate) if basic.turnover_rate is not None else None,
         } if detail["latest_daily"] else None,
         "latest_prediction": {
             "predict_date": str(detail["latest_prediction"].predict_date) if detail["latest_prediction"] else None,
