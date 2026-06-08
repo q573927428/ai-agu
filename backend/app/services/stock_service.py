@@ -67,6 +67,94 @@ class StockService:
         )
         return [r.to_dict() for r in records]
 
+    def list_stocks(self, page: int = 1, page_size: int = 10) -> tuple:
+        """分页获取所有股票列表（含最新行情和估值数据）"""
+        from app.models.factor import FactorStore
+        from sqlalchemy import func
+
+        # 1. 分页查询股票基础信息
+        query = self.db.query(StockBasic).filter(StockBasic.is_active == 1).order_by(StockBasic.stock_code)
+        total = query.count()
+        items = query.offset((page - 1) * page_size).limit(page_size).all()
+
+        codes = [s.stock_code for s in items]
+        exchange_map = {
+            "SSE": "SH",
+            "SZSE": "SZ",
+            "BSE": "BJ",
+        }
+
+        daily_map = {}
+        factor_map = {}
+
+        if codes:
+            # 2. 子查询：每个股票代码的最新交易日
+            latest_daily_sub = (
+                self.db.query(
+                    StockDaily.stock_code,
+                    func.max(StockDaily.trade_date).label("max_date")
+                )
+                .filter(StockDaily.stock_code.in_(codes))
+                .group_by(StockDaily.stock_code)
+                .subquery()
+            )
+
+            # 3. 关联查询最新日行情（只需返回列，不用取所有行再 Python 去重）
+            daily_rows = (
+                self.db.query(StockDaily)
+                .join(
+                    latest_daily_sub,
+                    (StockDaily.stock_code == latest_daily_sub.c.stock_code)
+                    & (StockDaily.trade_date == latest_daily_sub.c.max_date)
+                )
+                .all()
+            )
+            daily_map = {d.stock_code: d for d in daily_rows}
+
+            # 4. 子查询：每个股票代码的最新因子交易日
+            latest_factor_sub = (
+                self.db.query(
+                    FactorStore.stock_code,
+                    func.max(FactorStore.trade_date).label("max_date")
+                )
+                .filter(FactorStore.stock_code.in_(codes))
+                .group_by(FactorStore.stock_code)
+                .subquery()
+            )
+
+            # 5. 关联查询最新因子数据
+            factor_rows = (
+                self.db.query(FactorStore)
+                .join(
+                    latest_factor_sub,
+                    (FactorStore.stock_code == latest_factor_sub.c.stock_code)
+                    & (FactorStore.trade_date == latest_factor_sub.c.max_date)
+                )
+                .all()
+            )
+            factor_map = {f.stock_code: f for f in factor_rows}
+
+        # 6. 组装返回数据
+        enriched = []
+        for s in items:
+            daily = daily_map.get(s.stock_code)
+            factor = factor_map.get(s.stock_code)
+            exchange_tag = exchange_map.get(s.exchange, s.exchange)
+            enriched.append({
+                "stock_code": s.stock_code,
+                "stock_name": s.stock_name,
+                "industry": s.industry,
+                "area": s.area,
+                "exchange": exchange_tag,
+                "list_date": str(s.list_date) if s.list_date else None,
+                "close_price": float(daily.close) if daily and daily.close else None,
+                "pct_chg": float(daily.pct_chg) if daily and daily.pct_chg else None,
+                "pe_ttm": float(factor.stock_pe_ttm) if factor and factor.stock_pe_ttm is not None else None,
+                "pb": float(factor.stock_pb) if factor and factor.stock_pb is not None else None,
+                "turnover_rate": float(factor.stock_turnover_rate_5d) if factor and factor.stock_turnover_rate_5d is not None else None,
+            })
+        return enriched, total
+
     def get_stock_detail(self, stock_code: str) -> dict:
         """获取股票详情"""
         basic = self.get_stock_basic(stock_code)

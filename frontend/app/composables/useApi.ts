@@ -97,6 +97,13 @@ export function useApi() {
     return request<any>(`/api/v1/stocks/search?keyword=${encodeURIComponent(keyword)}`);
   }
 
+  /**
+   * 分页获取所有股票列表
+   */
+  async function fetchStockList(page: number = 1, pageSize: number = 10): Promise<ApiResponse<any>> {
+    return request<any>(`/api/v1/stocks/list?page=${page}&page_size=${pageSize}`);
+  }
+
   return {
     fetchRankings,
     fetchStockDetail,
@@ -107,5 +114,6 @@ export function useApi() {
     fetchMarketOverview,
     fetchFactorImportance,
     searchStocks,
+    fetchStockList,
   };
 }

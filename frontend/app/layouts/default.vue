@@ -55,6 +55,7 @@ const currentTitle = computed(() => {
   if (r.path === "/") return "首页仪表盘";
   if (r.path === "/rankings") return "TOP10排名";
   if (r.path === "/models") return "模型状态";
+  if (r.path === "/stocks") return "全部股票";
   if (r.path.startsWith("/stock/")) return "股票详情";
   return "";
 });

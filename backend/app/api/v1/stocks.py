@@ -10,6 +10,19 @@ from app.schemas.stock import StockBasicResponse, StockDetailResponse, ApiRespon
 router = APIRouter(prefix="/stocks", tags=["股票"])
 
 
+@router.get("/list")
+def list_stocks(page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=100), db: Session = Depends(get_db)) -> ApiResponse:
+    """分页获取所有股票列表（含最新行情和估值数据）"""
+    service = StockService(db)
+    items, total = service.list_stocks(page, page_size)
+    return ApiResponse(data={
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    })
+
+
 @router.get("/search")
 def search_stocks(keyword: str = Query(..., min_length=1), db: Session = Depends(get_db)) -> ApiResponse:
     """搜索股票"""

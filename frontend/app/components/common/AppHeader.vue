@@ -26,6 +26,10 @@
         <el-icon><ElIconDataAnalysis /></el-icon>
         <template #title>模型状态</template>
       </el-menu-item>
+      <el-menu-item index="/stocks">
+        <el-icon><ElIconList /></el-icon>
+        <template #title>全部股票</template>
+      </el-menu-item>
     </el-menu>
   </div>
 </template>
