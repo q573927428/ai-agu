@@ -80,6 +80,7 @@ def get_stock_kline(code: str, limit: int = Query(120, ge=30, le=3000), db: Sess
     """获取股票日K线数据（用于K线图展示）"""
     service = StockService(db)
     records = service.get_stock_daily_history(code, limit)
+    events = service.get_stock_events(code)
     return ApiResponse(data={
         "stock_code": code,
         "kline": [
@@ -95,6 +96,7 @@ def get_stock_kline(code: str, limit: int = Query(120, ge=30, le=3000), db: Sess
             }
             for r in records
         ],
+        "events": events,
     })
 
 

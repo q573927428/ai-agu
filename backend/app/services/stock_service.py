@@ -5,6 +5,7 @@ from datetime import date
 from app.models.stock import StockBasic
 from app.models.stock_daily import StockDaily
 from app.models.prediction import Prediction
+from app.models.stock_event import StockEvent
 
 
 class StockService:
@@ -55,6 +56,16 @@ class StockService:
         # 按日期升序返回（K线图需要从左到右从旧到新）
         records.reverse()
         return records
+
+    def get_stock_events(self, stock_code: str) -> list:
+        """获取股票事件（分红送股等）"""
+        records = (
+            self.db.query(StockEvent)
+            .filter(StockEvent.stock_code == stock_code)
+            .order_by(StockEvent.ex_date.asc())
+            .all()
+        )
+        return [r.to_dict() for r in records]
 
     def get_stock_detail(self, stock_code: str) -> dict:
         """获取股票详情"""

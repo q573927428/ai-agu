@@ -10,6 +10,7 @@ from .income import Income
 from .balancesheet import Balancesheet
 from .cashflow import Cashflow
 from .fina_indicator import FinaIndicator
+from .stock_event import StockEvent
 
 __all__ = [
     "Base",
@@ -24,4 +25,5 @@ __all__ = [
     "Balancesheet",
     "Cashflow",
     "FinaIndicator",
+    "StockEvent",
 ]

@@ -121,7 +121,7 @@
                 </el-radio-group>
               </div>
             </template>
-            <KlineChart :kline-data="klineData" :kline-loading="klineLoading" />
+            <KlineChart :kline-data="klineData" :kline-loading="klineLoading" :kline-events="klineEvents" />
           </el-card>
         </div>
       </div>
@@ -149,6 +149,7 @@ const stockPrediction = ref<StockPrediction | null>(null);
 const klineLoading = ref(false);
 const klineLimit = ref(120);
 const klineData = ref<any[]>([]);
+const klineEvents = ref<any[]>([]);
 
 const stockCode = computed(() => (route as any).params.code as string);
 
@@ -163,6 +164,7 @@ async function fetchKlineData() {
   const result = await fetchStockKline(stockCode.value, klineLimit.value);
   if (result.data) {
     klineData.value = result.data.kline || [];
+    klineEvents.value = result.data.events || [];
   }
   klineLoading.value = false;
 }

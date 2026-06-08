@@ -6,7 +6,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { ref, computed } from "vue";
 import VChart from "vue-echarts";
 import { use } from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
@@ -24,6 +24,7 @@ use([CanvasRenderer, CandlestickChart, BarChart, LineChart, TooltipComponent, Gr
 const props = defineProps<{
   klineData: any[];
   klineLoading: boolean;
+  klineEvents?: any[]; // 事件标记数据
 }>();
 
 const klineLoading = computed(() => props.klineLoading);
@@ -60,6 +61,28 @@ const chartOption = computed(() => {
   const ma10 = calcMA(10, closes);
   const ma20 = calcMA(20, closes);
 
+  // 过滤出在K线日期范围内的事件
+  const events = (props.klineEvents || []).filter((e: any) => {
+    return dates.includes(e.ex_date);
+  });
+
+  // 事件标记：默认在底部显示 🔀 文字，鼠标经过时 crosshair 自动显示竖线
+  const eventMarkLines = events.map((e: any) => ({
+    xAxis: e.ex_date,
+    label: {
+      formatter: `🔀 ${e.description || ""}`,
+      position: "start" as const,
+      color: "#e6a23c",
+      fontSize: 10,
+      fontWeight: "bold" as const,
+      backgroundColor: "rgba(255,255,255,0.85)",
+      padding: [1, 3],
+      borderRadius: 2,
+    },
+    // 不画线，由 axisPointer crosshair 在鼠标经过时自动显示竖线
+    lineStyle: { width: 0 },
+  }));
+
   return {
     tooltip: {
       trigger: "axis",
@@ -76,6 +99,13 @@ const chartOption = computed(() => {
         const ma10v = params.find((p: any) => p.seriesName === "MA10");
         const ma20v = params.find((p: any) => p.seriesName === "MA20");
         let res = `<div style="font-weight:bold;margin-bottom:4px">${date}</div>`;
+
+        // 检查是否有事件
+        const dayEvent = events.find((e: any) => e.ex_date === date);
+        if (dayEvent) {
+          res += `<div style="color:#e6a23c;font-weight:bold;margin-bottom:4px">📢 ${dayEvent.description || "除权除息"}</div>`;
+        }
+
         if (candle) {
           const d = candle.data;
           res += `开盘: ${d[1]}<br/>收盘: ${d[2]}<br/>最低: ${d[3]}<br/>最高: ${d[4]}<br/>`;
@@ -102,7 +132,11 @@ const chartOption = computed(() => {
         data: dates,
         gridIndex: 0,
         axisLine: { onZero: false },
-        axisLabel: { rotate: 30, fontSize: 10, interval: Math.floor(dates.length / 12) },
+        axisLabel: {
+          rotate: 30,
+          fontSize: 10,
+          interval: Math.floor(dates.length / 12),
+        },
         splitLine: { show: false },
         max: dates.length + 8,
       },
@@ -177,6 +211,8 @@ const chartOption = computed(() => {
           },
           data: [
             { yAxis: closes[closes.length - 1] ?? 0 },
+            // 事件标记（仅底部文字，鼠标经过时 crosshair 自动显示竖线）
+            ...eventMarkLines,
           ],
         },
       },
