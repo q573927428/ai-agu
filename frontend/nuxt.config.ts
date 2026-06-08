@@ -52,6 +52,7 @@ export default defineNuxtConfig({
         "echarts/components",
         "echarts/renderers",
         "vue-echarts",
+        'lodash-unified'
       ],
     },
   },
