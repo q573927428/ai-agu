@@ -12,9 +12,13 @@ export interface RankingItem {
   stock_name: string;
   predicted_return: number;
   predicted_return_1d: number | null;
+  actual_return_20d: number | null;
+  actual_return_1d: number | null;
   confidence: number | null;
   industry: string | null;
   market_cap: number | null;
+  close_price: number | null;
+  pre_close_price: number | null;
   top_factors: Array<{ name: string; contribution: number }> | null;
 }
 
@@ -56,13 +60,22 @@ export interface StockDaily {
   float_mv: number | null;
 }
 
-/** 股票预测 */
+/** 股票预测（含实际收益率对比） */
 export interface StockPrediction {
   predict_date: string;
   predicted_return: number | null;
+  actual_return_20d: number | null;
   predicted_return_1d: number | null;
+  actual_return_1d: number | null;
   confidence: number | null;
   model_version: string | null;
+  target_date?: string | null;
+}
+
+/** 预测历史API返回 */
+export interface PredictionHistoryData {
+  stock_code: string;
+  predictions: StockPrediction[];
 }
 
 /** 股票详情 */

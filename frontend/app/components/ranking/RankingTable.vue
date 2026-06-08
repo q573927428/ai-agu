@@ -9,24 +9,52 @@
       </template>
     </el-table-column>
     <el-table-column prop="stock_code" label="股票代码" width="120" />
-    <el-table-column prop="stock_name" label="股票名称" width="150">
+    <el-table-column prop="stock_name" label="股票名称" width="100">
       <template #default="{ row }">
         <el-link type="primary" :underline="false">{{ row.stock_name }}</el-link>
       </template>
     </el-table-column>
-    <el-table-column prop="predicted_return" label="预测20日涨跌幅" width="160" align="right" sortable="custom">
+    <el-table-column prop="close_price" label="当日收盘价" width="120" align="right" sortable="custom">
+      <template #default="{ row }">
+        <span v-if="row.close_price != null">{{ row.close_price.toFixed(2) }}</span>
+        <span v-else class="no-data">-</span>
+      </template>
+    </el-table-column>
+    <el-table-column prop="pre_close_price" label="前日收盘价" width="120" align="right" sortable="custom">
+      <template #default="{ row }">
+        <span v-if="row.pre_close_price != null">{{ row.pre_close_price.toFixed(2) }}</span>
+        <span v-else class="no-data">-</span>
+      </template>
+    </el-table-column>
+    <!-- <el-table-column prop="predicted_return" label="预测20日涨跌幅" width="160" align="right" sortable="custom">
       <template #default="{ row }">
         <span :style="{ color: getReturnColor(row.predicted_return) }">
           {{ formatPercent(row.predicted_return) }}
         </span>
       </template>
-    </el-table-column>
-    <el-table-column prop="predicted_return_1d" label="预测次日涨跌幅" width="160" align="right" sortable="custom">
+    </el-table-column> -->
+    <el-table-column prop="predicted_return_1d" label="预测涨跌" width="160" align="right" sortable="custom">
       <template #default="{ row }">
         <span v-if="row.predicted_return_1d != null" :style="{ color: getReturnColor(row.predicted_return_1d) }">
           {{ formatPercent(row.predicted_return_1d) }}
         </span>
         <span v-else>--</span>
+      </template>
+    </el-table-column>
+    <!-- <el-table-column label="实际20日涨跌幅" width="140" align="right" sortable="custom" prop="actual_return_20d">
+      <template #default="{ row }">
+        <span v-if="row.actual_return_20d != null" :style="{ color: getReturnColor(row.actual_return_20d) }">
+          {{ formatPercent(row.actual_return_20d) }}
+        </span>
+        <span v-else class="no-data">-</span>
+      </template>
+    </el-table-column> -->
+    <el-table-column label="实际涨跌" width="140" align="right" sortable="custom" prop="actual_return_1d">
+      <template #default="{ row }">
+        <span v-if="row.actual_return_1d != null" :style="{ color: getReturnColor(row.actual_return_1d) }">
+          {{ formatPercent(row.actual_return_1d) }}
+        </span>
+        <span v-else class="no-data">-</span>
       </template>
     </el-table-column>
     <el-table-column prop="confidence" label="置信度" width="130" align="right" sortable="custom">
@@ -35,7 +63,7 @@
         <span v-else>--</span>
       </template>
     </el-table-column>
-    <el-table-column prop="industry" label="行业" width="120">
+    <el-table-column prop="industry" label="行业" width="80">
       <template #default="{ row }">
         <el-tag v-if="row.industry" size="small">{{ row.industry }}</el-tag>
       </template>
@@ -135,5 +163,9 @@ function getReturnColor(value: number): string {
 
 .el-table {
   cursor: pointer;
+}
+
+.no-data {
+  color: #ccc;
 }
 </style>

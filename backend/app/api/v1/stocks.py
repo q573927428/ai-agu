@@ -196,8 +196,11 @@ def get_stock_financial(code: str, db: Session = Depends(get_db)) -> ApiResponse
 
 @router.get("/{code}/prediction")
 def get_stock_prediction(code: str, db: Session = Depends(get_db)) -> ApiResponse:
-    """获取股票预测历史"""
+    """获取股票预测历史（含实际收益率对比）"""
     from app.models.prediction import Prediction
+    from app.models.stock_daily import StockDaily
+    from datetime import timedelta
+
     records = (
         db.query(Prediction)
         .filter(Prediction.stock_code == code)
@@ -205,15 +208,61 @@ def get_stock_prediction(code: str, db: Session = Depends(get_db)) -> ApiRespons
         .limit(20)
         .all()
     )
+
+    # 批量获取实际行情数据
+    if records:
+        min_date = min(r.predict_date for r in records)
+        max_date = max(
+            max(r.predict_date, r.target_date if r.target_date else r.predict_date)
+            for r in records
+        ) + timedelta(days=5)
+
+        daily_rows = (
+            db.query(StockDaily.trade_date, StockDaily.close, StockDaily.pct_chg)
+            .filter(
+                StockDaily.stock_code == code,
+                StockDaily.trade_date.between(min_date, max_date),
+            )
+            .order_by(StockDaily.trade_date)
+            .all()
+        )
+        # 构建日期索引
+        daily_map = {}
+        for td, close, pct in daily_rows:
+            daily_map[td] = (float(close) if close else None, float(pct) if pct else None)
+    else:
+        daily_map = {}
+
+    predictions_data = []
+    for r in records:
+        # 获取预测日收盘价和次日涨跌幅
+        current_close = daily_map.get(r.predict_date, (None, None))[0]
+        next_day_pct = daily_map.get(r.predict_date + timedelta(days=1), (None, None))[1]
+
+        # 获取目标日期（T+20）收盘价
+        target_close = None
+        if r.target_date:
+            target_close = daily_map.get(r.target_date, (None, None))[0]
+
+        # 实际20日收益率（转为小数，与 predicted_return 格式一致）
+        actual_return_20d = None
+        if current_close and target_close and current_close > 0:
+            actual_return_20d = (target_close / current_close - 1)
+
+        # 实际次日涨跌幅（pct_chg 是百分比值如 5.0，转为小数）
+        actual_return_1d = next_day_pct / 100.0 if next_day_pct is not None else None
+
+        predictions_data.append({
+            "predict_date": str(r.predict_date),
+            "target_date": str(r.target_date) if r.target_date else None,
+            "predicted_return": float(r.predicted_return) if r.predicted_return else None,
+            "actual_return_20d": round(actual_return_20d, 4) if actual_return_20d is not None else None,
+            "predicted_return_1d": float(r.predicted_return_1d) if r.predicted_return_1d else None,
+            "actual_return_1d": round(actual_return_1d, 4) if actual_return_1d is not None else None,
+            "confidence": float(r.confidence) if r.confidence else None,
+        })
+
     return ApiResponse(data={
         "stock_code": code,
-        "predictions": [
-            {
-                "predict_date": str(r.predict_date),
-                "predicted_return": float(r.predicted_return) if r.predicted_return else None,
-                "predicted_return_1d": float(r.predicted_return_1d) if r.predicted_return_1d else None,
-                "confidence": float(r.confidence) if r.confidence else None,
-            }
-            for r in records
-        ],
+        "predictions": predictions_data,
     })
