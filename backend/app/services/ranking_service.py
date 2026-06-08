@@ -11,7 +11,7 @@ class RankingService:
         self.db = db
 
     def get_top50(self, snapshot_date: Optional[date] = None) -> List[RankingSnapshot]:
-        """获取指定日期的TOP50排名
+        """获取指定日期的TOP10排名
 
         如果指定日期没有排名数据，自动降级到最新的有效排名
         """
@@ -35,7 +35,7 @@ class RankingService:
         return rankings
 
     def get_latest_top50(self) -> List[RankingSnapshot]:
-        """获取最新TOP50排名"""
+        """获取最新TOP10排名"""
         latest_date = (
             self.db.query(RankingSnapshot.snapshot_date)
             .order_by(RankingSnapshot.snapshot_date.desc())

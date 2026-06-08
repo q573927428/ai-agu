@@ -24,7 +24,7 @@
       </el-menu-item>
       <el-menu-item index="/rankings">
         <el-icon><ElIconTrendCharts /></el-icon>
-        <template #title>TOP50排名</template>
+        <template #title>TOP10排名</template>
       </el-menu-item>
       <el-menu-item index="/models">
         <el-icon><ElIconDataAnalysis /></el-icon>

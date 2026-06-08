@@ -14,7 +14,7 @@ router = APIRouter(prefix="/rankings", tags=["排名"])
 
 @router.get("")
 def get_rankings(snapshot_date: Optional[str] = Query(None), db: Session = Depends(get_db)) -> RankingResponse:
-    """获取TOP50排名"""
+    """获取TOP10排名"""
     service = RankingService(db)
 
     target_date = None

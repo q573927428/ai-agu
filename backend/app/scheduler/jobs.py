@@ -63,7 +63,7 @@ async def daily_predict_job():
 
 
 async def generate_ranking_job():
-    """J07: 生成TOP50排名快照"""
+    """J07: 生成TOP10排名快照"""
     if not is_trade_day(datetime.now()):
         return
 

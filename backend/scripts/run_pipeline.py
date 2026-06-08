@@ -145,7 +145,7 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
         # Step 4: 排名
         logger.info("[4/5] 生成排名...")
         if not predictions.empty:
-            top50 = predictor.get_top_n(date.today(), 50)
+            top10 = predictor.get_top_n(date.today(), 10)
             from app.models.stock import StockBasic
             from app.models.factor import FactorStore
             from app.models.stock_daily import StockDaily
@@ -172,7 +172,7 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
                     if f.get("feature") and not f["feature"].startswith("macro_")
                 ][:20]
 
-            for item in top50:
+            for item in top10:
                 stock = db.query(StockBasic).filter(StockBasic.stock_code == item["stock_code"]).first()
                 if stock:
                     item["stock_name"] = stock.stock_name
@@ -238,8 +238,8 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
                     item["top_factors"] = []
 
             ranking_service = RankingService(db)
-            ranking_service.save_ranking_snapshot(date.today(), top50)
-            logger.info(f"✅ 排名生成完成: {len(top50)} 只股票")
+            ranking_service.save_ranking_snapshot(date.today(), top10)
+            logger.info(f"✅ 排名生成完成: {len(top10)} 只股票")
         else:
             logger.info("无预测结果，跳过排名生成")
 
