@@ -15,8 +15,8 @@ try:
     dates = [r[0] for r in db.query(StockDaily.trade_date).distinct().order_by(StockDaily.trade_date).all()]
     logger.info(f"交易日: {len(dates)} 天")
 
-    # 2. 计算因子（仅计算最近3年的日期）
-    THREE_YEARS_TRADING_DAYS = 2500  # 约10年（A股年均250个交易日）
+    # 2. 计算因子（仅计算最近2年的日期）
+    THREE_YEARS_TRADING_DAYS = 500  # 约2年（A股年均250个交易日）
     recent_dates = dates[-min(len(dates), THREE_YEARS_TRADING_DAYS):]
     logger.info(f"计算因子范围: {recent_dates[0]} ~ {recent_dates[-1]}, 共 {len(recent_dates)} 个交易日")
 
