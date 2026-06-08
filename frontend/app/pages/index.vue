@@ -8,7 +8,14 @@
           <template #header>
             <div class="card-header">
               <span>市场概览</span>
-              <el-tag type="info" size="small">{{ marketDate }}</el-tag>
+              <div class="header-right">
+                <el-tag v-if="isTradingTime()" type="success" size="small" effect="dark">交易中</el-tag>
+                <el-tag v-else type="info" size="small">盘后</el-tag>
+                <el-tag type="info" size="small">{{ marketDate }}</el-tag>
+                <el-tag v-if="nextRefreshSeconds > 0" type="warning" effect="plain">
+                  {{ nextRefreshSeconds }}s
+                </el-tag>
+              </div>
             </div>
           </template>
           <div class="market-grid">
@@ -89,7 +96,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed } from "vue";
 import { useRouter } from "vue-router";
 import dayjs from "dayjs";
 import { useApi } from "~/composables/useApi";
@@ -110,6 +117,105 @@ const marketDate = computed(() => {
   return dayjs().locale("zh-cn").format("YYYY年M月D日");
 });
 
+// ====== 高频定时刷新逻辑 ======
+/** 市场概览刷新间隔（毫秒） */
+const MARKET_REFRESH_INTERVAL = 10000; // 10秒
+/** 倒计时显示 */
+const nextRefreshSeconds = ref(0);
+/** 刷新定时器引用 */
+let marketTimer: ReturnType<typeof setTimeout> | null = null;
+/** 倒计时定时器引用 */
+let countdownTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * 判断当前是否为 A 股交易时间
+ * 交易时段：9:30-11:30, 13:00-15:00（仅工作日）
+ */
+function isTradingTime(): boolean {
+  const now = dayjs();
+  const day = now.day();
+  // 周末不交易
+  if (day === 0 || day === 6) return false;
+
+  const hour = now.hour();
+  const minute = now.minute();
+  const time = hour * 100 + minute;
+
+  // 上午 9:30 - 11:30
+  if (time >= 930 && time < 1130) return true;
+  // 下午 13:00 - 15:00
+  if (time >= 1300 && time < 1500) return true;
+
+  return false;
+}
+
+/**
+ * 获取当前动态刷新间隔
+ * 交易时段高频 10s，非交易时段低频 60s
+ */
+function getRefreshInterval(): number {
+  return isTradingTime() ? MARKET_REFRESH_INTERVAL : 60000;
+}
+
+/**
+ * 加载市场概览数据
+ */
+async function loadMarketOverview() {
+  try {
+    const res = await fetchMarketOverview();
+    if (res.data) {
+      marketOverview.value = res.data;
+    }
+  } catch (e) {
+    console.error("获取市场概览失败", e);
+  }
+}
+
+/**
+ * 启动定时刷新
+ * 使用两个独立定时器：
+ *  - countdownTimer: 每秒更新倒计时（只创建一次）
+ *  - marketTimer: setTimeout 链式调度数据请求（动态间隔）
+ */
+function startAutoRefresh() {
+  stopAutoRefresh();
+
+  // 立即刷新一次
+  loadMarketOverview();
+
+  // 倒计时指示器：独立运行，每秒更新
+  nextRefreshSeconds.value = Math.ceil(getRefreshInterval() / 1000);
+  countdownTimer = setInterval(() => {
+    if (nextRefreshSeconds.value <= 1) {
+      // 下一轮即将刷新，重置倒计时
+      nextRefreshSeconds.value = Math.ceil(getRefreshInterval() / 1000);
+    } else {
+      nextRefreshSeconds.value--;
+    }
+  }, 1000);
+
+  // 数据刷新：setTimeout 链式调度，每次请求完后用最新间隔调度下次
+  const scheduleRefresh = () => {
+    loadMarketOverview();
+    marketTimer = setTimeout(scheduleRefresh, getRefreshInterval());
+  };
+  marketTimer = setTimeout(scheduleRefresh, getRefreshInterval());
+}
+
+/**
+ * 停止定时刷新
+ */
+function stopAutoRefresh() {
+  if (marketTimer) {
+    clearTimeout(marketTimer);
+    marketTimer = null;
+  }
+  if (countdownTimer) {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+  }
+}
+
 onMounted(async () => {
   loading.value = true;
 
@@ -128,6 +234,13 @@ onMounted(async () => {
   }
 
   loading.value = false;
+
+  // 启动市场概览高频定时刷新
+  startAutoRefresh();
+});
+
+onUnmounted(() => {
+  stopAutoRefresh();
 });
 
 function goToStock(code: string) {
@@ -172,6 +285,12 @@ function formatChangePercent(change: number | null | undefined): string {
   justify-content: space-between;
   align-items: center;
   font-weight: 600;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .market-grid {

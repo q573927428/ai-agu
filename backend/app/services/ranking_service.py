@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 from datetime import date, datetime
 from app.models.ranking import RankingSnapshot
+from loguru import logger
 
 
 class RankingService:
@@ -10,17 +11,28 @@ class RankingService:
         self.db = db
 
     def get_top50(self, snapshot_date: Optional[date] = None) -> List[RankingSnapshot]:
-        """获取指定日期的TOP50排名"""
+        """获取指定日期的TOP50排名
+
+        如果指定日期没有排名数据，自动降级到最新的有效排名
+        """
         if snapshot_date is None:
             snapshot_date = date.today()
 
-        return (
+        # 尝试查询指定日期的排名
+        rankings = (
             self.db.query(RankingSnapshot)
             .filter(RankingSnapshot.snapshot_date == snapshot_date)
             .order_by(RankingSnapshot.rank_position)
             .limit(50)
             .all()
         )
+
+        # 如果指定日期没有数据，自动降级到最新排名
+        if not rankings:
+            logger.warning(f"排名: {snapshot_date} 无数据，降级到最近有效排名")
+            return self.get_latest_top50()
+
+        return rankings
 
     def get_latest_top50(self) -> List[RankingSnapshot]:
         """获取最新TOP50排名"""
@@ -30,7 +42,16 @@ class RankingService:
             .first()
         )
         if latest_date:
-            return self.get_top50(latest_date[0])
+            rankings = (
+                self.db.query(RankingSnapshot)
+                .filter(RankingSnapshot.snapshot_date == latest_date[0])
+                .order_by(RankingSnapshot.rank_position)
+                .limit(50)
+                .all()
+            )
+            if rankings:
+                logger.info(f"排名: 使用最近有效排名日期 {latest_date[0]}")
+                return rankings
         return []
 
     def save_ranking_snapshot(self, snapshot_date: date, rankings: list):

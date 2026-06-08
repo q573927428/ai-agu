@@ -24,13 +24,16 @@ def get_rankings(snapshot_date: Optional[str] = Query(None), db: Session = Depen
     if not rankings:
         return RankingResponse(code=404, data=None, message="暂无排名数据")
 
-    # 查询这些股票的最新预测置信度
+    # 判断实际数据日期（可能因降级而与请求日期不同）
+    actual_date = rankings[0].snapshot_date
+
+    # 查询这些股票的最新预测置信度（用实际数据日期关联）
     stock_codes = [r.stock_code for r in rankings]
     predictions = (
         db.query(Prediction)
         .filter(
             Prediction.stock_code.in_(stock_codes),
-            Prediction.predict_date == (target_date or date.today()),
+            Prediction.predict_date == actual_date,
         )
         .all()
     )
@@ -55,10 +58,8 @@ def get_rankings(snapshot_date: Optional[str] = Query(None), db: Session = Depen
             top_factors=top_factors,
         ))
 
-    snapshot_date_used = target_date or (rankings[0].snapshot_date if rankings else date.today())
-
     return RankingResponse(data={
-        "date": str(snapshot_date_used),
+        "date": str(actual_date),
         "rankings": [item.model_dump() for item in items],
         "total": len(items),
     })

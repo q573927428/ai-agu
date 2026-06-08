@@ -1,6 +1,6 @@
 """AkShare数据采集服务"""
 import pandas as pd
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime
 from loguru import logger
 
@@ -77,7 +77,7 @@ class DataFetcher:
             return {}
 
     async def fetch_market_index(self) -> pd.DataFrame:
-        """获取市场指数数据"""
+        """获取市场指数数据（历史日线）"""
         try:
             import akshare as ak
             df = ak.stock_zh_index_daily(symbol="sh000001")
@@ -85,6 +85,21 @@ class DataFetcher:
             return df
         except Exception as e:
             logger.error(f"获取指数数据失败: {e}")
+            return pd.DataFrame()
+
+    async def fetch_index_spot(self) -> pd.DataFrame:
+        """获取主要指数实时行情（交易时段使用）
+        
+        返回字段示例: 代码, 名称, 最新价, 涨跌幅, 涨跌额, 成交量, 成交额
+        """
+        try:
+            import akshare as ak
+            df = ak.stock_zh_index_spot()
+            if df is not None and not df.empty:
+                logger.debug(f"获取指数实时行情: {len(df)} 条")
+            return df
+        except Exception as e:
+            logger.error(f"获取指数实时行情失败: {e}")
             return pd.DataFrame()
 
     async def fetch_north_flow(self) -> pd.DataFrame:
