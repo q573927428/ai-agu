@@ -30,7 +30,7 @@ class MacroData(Base):
 
     # ── 采购经理指数 (cn_pmi, 月度) ──
     pmi = Column(DECIMAL(10, 4), comment="制造业PMI(%)")            # cn_pmi -> pmi010000
-    pmi_service = Column(DECIMAL(10, 4), comment="非制造业PMI(%)")  # cn_pmi 无此数据
+    pmi030000 = Column(DECIMAL(10, 4), comment="制造业PMI(pmi030000)")  # cn_pmi -> pmi030000（新制造业PMI口径）
 
     # ── 货币供应量 (cn_m, 月度) ──
     m2_yoy = Column(DECIMAL(10, 4), comment="M2同比(%)")

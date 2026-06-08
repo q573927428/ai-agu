@@ -117,10 +117,10 @@ def seed_data():
                 data_date=date.today(),
                 gdp_yoy=5.2, gdp=1260582.00,
                 cpi_yoy=0.3, cpi_val=112.50, ppi_yoy=0.1,
-                pmi=50.8,
+                pmi=50.8, pmi030000=50.8,
                 m2_yoy=7.4,
                 shibor_on=1.32, shibor_1w=1.38, shibor_1m=1.85, shibor_1y=1.46,
-                hgt=179961.34, sgt=224809.37, north_flow=404770.71,
+                hgt=17.99, sgt=22.48, north_flow=40.48,
                 margin_balance=15000.00,
             ))
             db.commit()
