@@ -102,10 +102,9 @@ const chartOption = computed(() => {
         data: dates,
         gridIndex: 0,
         axisLine: { onZero: false },
-        axisLabel: { rotate: 30, fontSize: 10 },
+        axisLabel: { rotate: 30, fontSize: 10, interval: Math.floor(dates.length / 12) },
         splitLine: { show: false },
-        min: "dataMin",
-        max: "dataMax",
+        max: dates.length + 8,
       },
       {
         type: "category",
@@ -114,12 +113,14 @@ const chartOption = computed(() => {
         axisLine: { onZero: false },
         axisLabel: { show: false },
         splitLine: { show: false },
+        max: dates.length + 8,
       },
     ],
     yAxis: [
       {
         type: "value",
         gridIndex: 0,
+        position: "right",
         scale: true,
         splitArea: { show: true, areaStyle: { color: ["rgba(250,250,250,0.3)", "rgba(200,200,200,0.1)"] } },
         splitLine: { show: true, lineStyle: { type: "dashed", color: "#eee" } },
@@ -160,6 +161,22 @@ const chartOption = computed(() => {
           color0: "#14b143",
           borderColor: "#ef232a",
           borderColor0: "#14b143",
+        },
+        markLine: {
+          silent: true,
+          symbol: "none",
+          lineStyle: { type: "dashed", color: "#f56c6c", width: 1 },
+          label: {
+            show: true,
+            position: "end",
+            color: "#f56c6c",
+            fontSize: 11,
+            fontWeight: "bold",
+            formatter: () => `${closes[closes.length - 1]?.toFixed(2)}`,
+          },
+          data: [
+            { yAxis: closes[closes.length - 1] ?? 0 },
+          ],
         },
       },
       {
