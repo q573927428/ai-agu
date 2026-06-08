@@ -37,7 +37,7 @@ try:
         logger.error("因子数据不足")
         exit(1)
 
-    # 4. 训练20日预测模型（最近3年数据）
+    # 4. 训练次日预测模型（最近3年数据）
     start = str(fdates[0])
     end = str(fdates[-3])
     logger.info(f"训练范围: {start} ~ {end}")

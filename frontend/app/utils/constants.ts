@@ -97,7 +97,7 @@ export const FACTOR_NAME_MAP: Record<string, string> = {
   // 个股因子
   stock_return_1d: "1日收益",
   stock_return_5d: "5日收益",
-  stock_return_20d: "20日收益",
+  stock_return_10d: "10日收益",
   stock_volatility_20d: "20日波动率",
   stock_volatility_60d: "60日波动率",
   stock_volume_ratio_5d: "5日量比",

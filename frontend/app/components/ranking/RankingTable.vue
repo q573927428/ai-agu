@@ -33,10 +33,10 @@
         </span>
       </template>
     </el-table-column>
-    <!-- <el-table-column label="实际20日涨跌幅" width="140" align="right" sortable="custom" prop="actual_return_20d">
+    <!-- <el-table-column label="实际次日涨跌幅" width="140" align="right" sortable="custom" prop="actual_return_1d">
       <template #default="{ row }">
-        <span v-if="row.actual_return_20d != null" :style="{ color: getReturnColor(row.actual_return_20d) }">
-          {{ formatPercent(row.actual_return_20d) }}
+        <span v-if="row.actual_return_1d != null" :style="{ color: getReturnColor(row.actual_return_1d) }">
+          {{ formatPercent(row.actual_return_1d) }}
         </span>
         <span v-else class="no-data">-</span>
       </template>

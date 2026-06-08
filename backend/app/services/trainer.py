@@ -14,7 +14,7 @@ from app.models.stock_daily import StockDaily
 from app.config import settings
 
 
-# ============ 多模型集成训练的异构超参数配置（20日预测） ============
+# ============ 多模型集成训练的异构超参数配置（次日预测） ============
 ENSEMBLE_PARAMS: List[Dict[str, Any]] = [
     {
         # 模型A: 默认主模型
@@ -132,7 +132,7 @@ class Trainer:
         ]
 
         # ====== 一次性预计算所有标签 ======
-        logger.info("预计算未来20日收益率标签...")
+        logger.info("预计算次日收益率标签...")
         label_map = self._precompute_labels(all_dates[0], end_date)
         logger.info(f"预计算完成，共 {len(label_map)} 条有效标签")
 
@@ -169,11 +169,11 @@ class Trainer:
             batch_df = pd.DataFrame(records)
 
             # 使用预计算标签映射
-            batch_df["future_return_20d"] = batch_df.apply(
+            batch_df["future_return_1d"] = batch_df.apply(
                 lambda row: label_map.get((row["stock_code"], row["trade_date"])),
                 axis=1,
             )
-            batch_df = batch_df.dropna(subset=["future_return_20d"])
+            batch_df = batch_df.dropna(subset=["future_return_1d"])
             if not batch_df.empty:
                 dfs.append(batch_df)
 
@@ -191,10 +191,10 @@ class Trainer:
             return None, None, None, None
 
         # 特征列（排除非因子列）
-        feature_cols = [c for c in df.columns if c not in ("stock_code", "trade_date", "future_return_20d")]
+        feature_cols = [c for c in df.columns if c not in ("stock_code", "trade_date", "future_return_1d")]
 
         X = df[feature_cols]
-        y = df["future_return_20d"]
+        y = df["future_return_1d"]
 
         # 按时间分割
         unique_dates = sorted(df["trade_date"].unique())
@@ -212,7 +212,7 @@ class Trainer:
         return X_train, y_train, X_valid, y_valid
 
     def _precompute_labels(self, start_date, end_date) -> dict:
-        """分批预计算所有 (stock_code, trade_date) → future_return_20d 标签"""
+        """分批预计算所有 (stock_code, trade_date) → future_return_1d 标签（次日收益率）"""
         # 获取所有股票列表
         stock_rows = (
             self.db.query(StockDaily.stock_code)
@@ -231,7 +231,7 @@ class Trainer:
             batch_codes = stock_codes[i:i + LABEL_BATCH]
 
             rows = (
-                self.db.query(StockDaily.stock_code, StockDaily.trade_date, StockDaily.close)
+                self.db.query(StockDaily.stock_code, StockDaily.trade_date, StockDaily.pct_chg)
                 .filter(
                     StockDaily.stock_code.in_(batch_codes),
                     StockDaily.trade_date.between(start_date, end_date),
@@ -242,31 +242,15 @@ class Trainer:
 
             current_stock = None
             dates_list = []
-            close_list = []
 
             for row in rows:
-                sc, td, close = row
-                if close is None:
+                sc, td, pct = row
+                if pct is None:
                     continue
-                close_val = float(close)
-
-                if sc != current_stock:
-                    if current_stock and len(dates_list) >= 21:
-                        for idx in range(len(dates_list) - 20):
-                            future_return = (close_list[idx + 20] / close_list[idx] - 1) * 100
-                            label_map[(current_stock, dates_list[idx])] = future_return
-                    current_stock = sc
-                    dates_list = [td]
-                    close_list = [close_val]
-                else:
-                    dates_list.append(td)
-                    close_list.append(close_val)
-
-            # 处理当前批次最后一只股票
-            if current_stock and len(dates_list) >= 21:
-                for idx in range(len(dates_list) - 20):
-                    future_return = (close_list[idx + 20] / close_list[idx] - 1) * 100
-                    label_map[(current_stock, dates_list[idx])] = future_return
+                # 次日收益率 = T+1日的 pct_chg（当日涨跌幅÷100）
+                # 标签使用百分数，pct_chg 已存为涨跌幅百分比（如 5.0 = 5%）
+                future_return = float(pct)
+                label_map[(sc, td)] = future_return
 
             logger.info(f"标签计算进度: {min(i + LABEL_BATCH, len(stock_codes))}/{len(stock_codes)} 只股票")
 
@@ -345,10 +329,9 @@ class Trainer:
             feature_importance = model.get_feature_importance(list(X_train.columns))
             top_features = feature_importance.head(20).to_dict("records")
 
-            # 将旧20日模型设为非活跃（不影响1日模型）
+            # 将旧模型设为非活跃
             self.db.query(ModelRecord).filter(
                 ModelRecord.is_active == 1,
-                ~ModelRecord.model_version.like("1d_model%"),
             ).update({"is_active": 0})
 
             model_record = ModelRecord(
@@ -400,10 +383,9 @@ class Trainer:
         if not model_results:
             return {"status": "failed", "message": "所有模型训练失败"}
 
-        # 将旧20日模型设为非活跃（不影响1日模型）
+        # 将旧模型设为非活跃
         self.db.query(ModelRecord).filter(
             ModelRecord.is_active == 1,
-            ~ModelRecord.model_version.like("1d_model%"),
         ).update({"is_active": 0})
 
         # 保存所有模型到数据库

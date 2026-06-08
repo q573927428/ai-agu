@@ -35,9 +35,9 @@
 |------|------|------|
 | F1 | 数据采集 | 每日自动获取A股全市场股票数据（不含K线）及财务数据 |
 | F2 | 因子工程 | 计算50个宏观/市场/行业/个股因子 |
-| F3 | 标签生成 | 基于未来20日收益率生成训练标签 |
+| F3 | 标签生成 | 基于次日收益率生成训练标签 |
 | F4 | 模型训练 | 使用LightGBM训练排序模型 |
-| F5 | 每日预测 | 预测全市场股票未来20日收益率 |
+| F5 | 每日预测 | 预测全市场股票次日收益率 |
 | F6 | TOP50排名 | 输出收益率预测最高的50只股票 |
 | F7 | REST API | 提供标准RESTful接口供前端调用 |
 | F8 | 前端展示 | Nuxt4页面展示排名列表与股票详情 |
@@ -108,7 +108,7 @@ AkShare ──→ DataFetcher ──→ MySQL (原始数据)
                                 │
                     ┌───────────┴───────────┐
                     │   LabelGenerator      │
-                    │   (未来20日收益率标签)  │
+                    │   (次日收益率标签)       │
                     └───────────┬───────────┘
                                 │
                     ┌───────────┴───────────┐
@@ -493,8 +493,8 @@ CREATE TABLE prediction (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     stock_code VARCHAR(10) NOT NULL,
     predict_date DATE NOT NULL COMMENT '预测生成日期',
-    target_date DATE NOT NULL COMMENT '目标日期(T+20)',
-    predicted_return DECIMAL(12,6) COMMENT '预测20日收益率',
+    target_date DATE NOT NULL COMMENT '目标日期(T+1)',
+    predicted_return DECIMAL(12,6) COMMENT '预测次日收益率',
     confidence DECIMAL(6,4) COMMENT '预测置信度',
     model_version VARCHAR(50) COMMENT '模型版本号',
     rank_score DECIMAL(12,6) COMMENT '排名分数',
@@ -639,15 +639,15 @@ class FactorEngine:
 
 ```python
 class LabelGenerator:
-    """标签生成器 - 计算未来20日收益率"""
+    """标签生成器 - 计算次日收益率"""
 
     def generate_labels(self, stock_data: pd.DataFrame, trade_date: str) -> pd.DataFrame:
         """
-        未来20日收益率 = (Pt+20 / Pt - 1) * 100%
-        以20个交易日后的收盘价计算
+        次日收益率 = T+1日的pct_chg（涨跌幅百分比）
+        直接使用stock_daily表中的pct_chg字段
         """
-        # 遍历每只股票，计算其20日后的收益率
-        # 输出：stock_code, trade_date, future_return_20d
+        # 遍历每只股票，取T+1日的涨跌幅
+        # 输出：stock_code, trade_date, future_return_1d
 
     def generate_classification_labels(self, returns: pd.Series, threshold: float = 0.0) -> pd.Series:
         """将收益率转换为分类标签（可选，用于分类模型）"""
@@ -667,7 +667,7 @@ class LightGBMTrainer:
     def prepare_training_data(self, start_date: str, end_date: str) -> tuple:
         """准备训练数据：从factor_store和标签表合并"""
         # X: factor_store中的所有因子列
-        # y: future_return_20d
+        # y: future_return_1d
 
     def train(self, X_train, y_train, X_valid, y_valid, params: dict = None) -> dict:
         """训练LightGBM回归模型"""
@@ -860,8 +860,8 @@ export function useApi() {
 ├──────────────────────┤
 │ 1. 从factor_store    │
 │    获取全量因子数据    │
-│ 2. 从stock_daily计算  │
-│    future_return_20d  │
+│ 2. 从stock_daily获取  │
+│    future_return_1d   │
 │    作为训练标签        │
 │ 3. 合并因子+标签       │
 │ 4. 按时间切分：        │
@@ -1095,8 +1095,8 @@ Response:
 | J02 | `fetch_financial_data` | 16:00 | 每周一 | 更新最新财报数据 |
 | J03 | `fetch_macro_data` | 09:00 | 每个交易日 | 采集最新宏观经济数据 |
 | J04 | `compute_factors` | 16:00 | 每个交易日 | 计算全市场50个因子 |
-| J05 | `generate_labels` | 16:30 | 每个交易日 | 为最新数据生成未来20日标签 |
-| J06 | `daily_predict` | 17:00 | 每个交易日 | 预测全市场股票20日收益率 |
+| J05 | `generate_labels` | 16:30 | 每个交易日 | 为最新数据生成次日标签 |
+| J06 | `daily_predict` | 17:00 | 每个交易日 | 预测全市场股票次日收益率 |
 | J07 | `generate_ranking` | 17:30 | 每个交易日 | 生成TOP50排名快照 |
 | J08 | `train_model` | 每月1日 02:00 | 每月 | 使用全量历史数据重训模型 |
 | J09 | `backfill_history` | 手动触发 | 按需 | 历史数据回填(初始化用) |
@@ -1156,13 +1156,13 @@ scheduler.add_job(
             └── 写入 factor_store 表
 16:30 ──→ J05 标签生成
             │
-            ├── 根据已有20日后的数据计算T+20收益率
-            └── (历史数据标注，实时数据无法立即标注)
+            ├── 根据T+1日pct_chg计算次日收益率
+            └── (使用stock_daily.pct_chg字段作为标签)
 17:00 ──→ J06 每日预测
             │
             ├── 加载最新模型
             ├── 获取当日因子数据
-            ├── 批量预测未来20日收益率
+            ├── 批量预测次日收益率
             └── 写入 prediction 表
 17:30 ──→ J07 生成排名
             │
@@ -1292,7 +1292,7 @@ NUXT_PUBLIC_API_BASE=http://localhost:8000
 
 ### 阶段四：机器学习模块（第6-7周）
 
-- [ ] LabelGenerator：未来20日收益率标签计算
+- [ ] LabelGenerator：次日收益率标签计算
 - [ ] 训练数据集构建（因子+标签合并）
 - [ ] LightGBM 模型封装（训练、保存、加载）
 - [ ] 模型训练脚本（包含5折交叉验证）

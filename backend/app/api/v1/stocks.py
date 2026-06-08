@@ -238,21 +238,16 @@ def get_stock_prediction(code: str, db: Session = Depends(get_db)) -> ApiRespons
         current_close = daily_map.get(r.predict_date, (None, None))[0]
         next_day_pct = daily_map.get(r.predict_date + timedelta(days=1), (None, None))[1]
 
-        # 获取目标日期（T+20）收盘价
-        target_close = None
-        if r.target_date:
-            target_close = daily_map.get(r.target_date, (None, None))[0]
-
-        # 实际20日收益率（转为小数，与 predicted_return 格式一致）
-        actual_return_20d = None
-        if current_close and target_close and current_close > 0:
-            actual_return_20d = (target_close / current_close - 1)
+        # 实际次日收益率（直接使用T+1日涨跌幅，转为小数与 predicted_return 格式一致）
+        actual_return_1d = None
+        if next_day_pct is not None:
+            actual_return_1d = next_day_pct / 100.0
 
         predictions_data.append({
             "predict_date": str(r.predict_date),
             "target_date": str(r.target_date) if r.target_date else None,
             "predicted_return": float(r.predicted_return) if r.predicted_return else None,
-            "actual_return_20d": round(actual_return_20d, 4) if actual_return_20d is not None else None,
+            "actual_return_1d": round(actual_return_1d, 4) if actual_return_1d is not None else None,
             "confidence": float(r.confidence) if r.confidence else None,
         })
 

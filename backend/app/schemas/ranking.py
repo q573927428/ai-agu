@@ -14,7 +14,7 @@ class RankingItem(BaseModel):
     stock_code: str
     stock_name: str
     predicted_return: float
-    actual_return_20d: Optional[float] = None
+    actual_return_1d: Optional[float] = None
     confidence: Optional[float] = None
     industry: Optional[str] = None
     market_cap: Optional[float] = None

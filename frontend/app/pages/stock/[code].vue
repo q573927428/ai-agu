@@ -87,7 +87,7 @@
                 <span class="info-value">{{ stockPrediction.predict_date }}</span>
               </div>
               <div class="info-row">
-                <span class="info-label">预测涨跌幅（20日）</span>
+                <span class="info-label">预测涨跌幅（次日）</span>
                 <span class="info-value" :style="{ color: getReturnColor(stockPrediction.predicted_return) }">
                   {{ formatPercent(stockPrediction.predicted_return) }}
                 </span>

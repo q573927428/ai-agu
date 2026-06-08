@@ -61,7 +61,7 @@ class FactorStore(Base):
     # 个股因子 (20) - 反映个股自身特征
     stock_return_1d = Column(DECIMAL(12, 6), comment="个股1日收益率")
     stock_return_5d = Column(DECIMAL(12, 6), comment="个股5日收益率")
-    stock_return_20d = Column(DECIMAL(12, 6), comment="个股20日收益率")
+    stock_return_10d = Column(DECIMAL(12, 6), comment="个股10日收益率")
     stock_volatility_20d = Column(DECIMAL(12, 6), comment="个股20日年化波动率")
     stock_volatility_60d = Column(DECIMAL(12, 6), comment="个股60日年化波动率")
     stock_volume_ratio_5d = Column(DECIMAL(12, 6), comment="个股5日量比(均量/20日均量)")
@@ -75,8 +75,8 @@ class FactorStore(Base):
     stock_profit_yoy = Column(DECIMAL(12, 6), comment="个股净利润同比增速(%)")
     stock_gross_margin = Column(DECIMAL(12, 6), comment="个股毛利率(%)")
     stock_debt_ratio = Column(DECIMAL(12, 6), comment="个股资产负债率(%)")
-    stock_momentum_20d = Column(DECIMAL(12, 6), comment="个股20日动量因子(剔除最近1日收益率)")
-    stock_reversal_5d = Column(DECIMAL(12, 6), comment="个股5日反转因子(负的5日收益率)")
+    stock_momentum_20d = Column(DECIMAL(12, 6), comment="个股20日动量因子")
+    stock_reversal_5d = Column(DECIMAL(12, 6), comment="个股5日反转因子")
     stock_size_factor = Column(DECIMAL(12, 6), comment="个股规模因子(对数总市值)")
     stock_illiquidity = Column(DECIMAL(12, 6), comment="个股非流动性指标(Amihud,收益率/成交额)")
 

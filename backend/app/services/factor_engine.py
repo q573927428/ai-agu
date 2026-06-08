@@ -534,12 +534,12 @@ class FactorEngine:
 
         factors = {}
 
-        # S01-S03: 收益率因子
+        # S01-S04: 收益率因子
         factors["stock_return_1d"] = float(returns[-1]) if len(returns) >= 1 else 0
-        factors["stock_return_5d"] = float(closes_arr[-1] / closes_arr[-min(6, len(closes_arr))] - 1) if len(closes_arr) >= 6 else 0
-        factors["stock_return_20d"] = float(closes_arr[-1] / closes_arr[-min(21, len(closes_arr))] - 1) if len(closes_arr) >= 21 else 0
+        factors["stock_return_5d"] = float(closes_arr[-2] / closes_arr[-min(6, len(closes_arr))] - 1) if len(closes_arr) >= 6 else 0
+        factors["stock_return_10d"] = float(closes_arr[-2] / closes_arr[-min(11, len(closes_arr))] - 1) if len(closes_arr) >= 11 else 0
 
-        # S04-S05: 波动率因子
+        # S05-S06: 波动率因子
         factors["stock_volatility_20d"] = float(np.std(returns[-20:]) * np.sqrt(252)) if len(returns) >= 20 else 0
         factors["stock_volatility_60d"] = float(np.std(returns) * np.sqrt(252)) if len(returns) >= 2 else 0
 

@@ -1,4 +1,4 @@
-"""标签生成器 - 计算未来20日收益率"""
+"""标签生成器 - 计算次日收益率"""
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -15,42 +15,27 @@ class LabelGenerator:
         self.db = db
 
     def generate_labels(self, trade_date: str) -> pd.DataFrame:
-        """生成未来20日收益率标签"""
+        """生成次日收益率标签（使用pct_chg涨跌幅）"""
         trade_date_dt = datetime.strptime(trade_date, "%Y-%m-%d").date()
+        next_date = trade_date_dt + timedelta(days=1)
 
-        # 获取当日所有股票收盘价
-        current = (
-            self.db.query(StockDaily.stock_code, StockDaily.close)
-            .filter(StockDaily.trade_date == trade_date_dt)
+        # 获取当日所有股票的次日涨跌幅
+        rows = (
+            self.db.query(StockDaily.stock_code, StockDaily.pct_chg)
+            .filter(StockDaily.trade_date == next_date)
             .all()
         )
 
         labels = []
-        for stock_code, close in current:
-            if not close:
+        for stock_code, pct_chg in rows:
+            if pct_chg is None:
                 continue
-
-            # 查找20个交易日后的数据
-            future_date = trade_date_dt
-            for _ in range(30):  # 最多找30个自然日
-                future_date += timedelta(days=1)
-                future_record = (
-                    self.db.query(StockDaily.close)
-                    .filter(
-                        StockDaily.stock_code == stock_code,
-                        StockDaily.trade_date == future_date,
-                    )
-                    .first()
-                )
-                if future_record and future_record[0]:
-                    future_close = float(future_record[0])
-                    future_return = (future_close / float(close) - 1) * 100
-                    labels.append({
-                        "stock_code": stock_code,
-                        "trade_date": trade_date_dt,
-                        "future_return_20d": future_return,
-                    })
-                    break
+            # pct_chg 已经是百分数（如 5.0 = 5%），直接作为标签
+            labels.append({
+                "stock_code": stock_code,
+                "trade_date": trade_date_dt,
+                "future_return_1d": float(pct_chg),
+            })
 
         df = pd.DataFrame(labels)
         logger.info(f"标签生成完成: {len(df)} 条")

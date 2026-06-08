@@ -42,15 +42,14 @@ def get_rankings(snapshot_date: Optional[str] = Query(None), db: Session = Depen
 
     # 批量查询这些股票的实际行情数据（用于对比）
     pred_date = actual_date
-    next_date = pred_date + timedelta(days=1)
-    target_20d_date = pred_date + timedelta(days=20)
+    target_date = pred_date + timedelta(days=1)  # 次日（T+1）
 
-    # 查询预测日、次日、T+20的收盘价/涨跌幅，以及前日收盘价
+    # 查询预测日、次日的收盘价/涨跌幅，以及前日收盘价
     daily_rows = (
         db.query(StockDaily.stock_code, StockDaily.trade_date, StockDaily.close, StockDaily.pre_close, StockDaily.pct_chg)
         .filter(
             StockDaily.stock_code.in_(stock_codes),
-            StockDaily.trade_date.in_([pred_date, next_date, target_20d_date]),
+            StockDaily.trade_date.in_([pred_date, target_date]),
         )
         .all()
     )
@@ -79,19 +78,16 @@ def get_rankings(snapshot_date: Optional[str] = Query(None), db: Session = Depen
         close_price = today_data[0]
         pre_close_price = today_data[1]
 
-        # 实际20日收益率
-        current_close = close_price
-        target_close = stock_actual.get(target_20d_date, (None, None, None))[0]
-        actual_return_20d = None
-        if current_close and target_close and current_close > 0:
-            actual_return_20d = round((target_close / current_close - 1), 4)
+        # 实际次日收益率（直接使用T+1日的涨跌幅）
+        next_day_data = stock_actual.get(target_date, (None, None, None))
+        actual_return_1d = next_day_data[2] / 100.0 if next_day_data[2] is not None else None
 
         items.append(RankingItem(
             rank=r.rank_position,
             stock_code=r.stock_code,
             stock_name=r.stock_name or "",
             predicted_return=float(r.predicted_return or 0),
-            actual_return_20d=actual_return_20d,
+            actual_return_1d=actual_return_1d,
             confidence=confidence_map.get(r.stock_code),
             industry=r.industry,
             market_cap=float(r.market_cap or 0),
