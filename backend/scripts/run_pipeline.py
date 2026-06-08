@@ -109,8 +109,14 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
 
     db = SessionLocal()
     try:
+        # Step 0: 增量拉取分红送股数据
+        logger.info("[0/5] 增量拉取分红送股数据...")
+        from scripts.fetch_dividend import fetch_dividend_incremental
+        dividend_count = fetch_dividend_incremental(session=db, delay=0.3)
+        logger.info(f"✅ 分红数据增量拉取完成: {dividend_count} 条")
+
         # Step 1: 因子计算
-        logger.info("[1/4] 计算因子...")
+        logger.info("[1/5] 计算因子...")
         engine = FactorEngine(db)
         df = engine.compute_all(trade_date, top_n=top_n)
         if not df.empty:
@@ -118,7 +124,7 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
         logger.info(f"✅ 因子计算完成: {len(df)} 只股票")
 
         # Step 2: 标签生成
-        logger.info("[2/4] 生成标签...")
+        logger.info("[2/5] 生成标签...")
         label_gen = LabelGenerator(db)
         labels = label_gen.generate_labels(trade_date)
         logger.info(f"✅ 标签生成完成: {len(labels)} 条")
@@ -127,7 +133,7 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
         model_ready = _check_and_train_model(db, trade_date)
 
         # Step 3: 预测
-        logger.info("[3/4] 预测...")
+        logger.info("[3/5] 预测...")
         predictor = Predictor(db)
         if model_ready:
             predictions = predictor.predict_daily(trade_date)
@@ -137,7 +143,7 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
         logger.info(f"✅ 预测完成: {len(predictions)} 只股票")
 
         # Step 4: 排名
-        logger.info("[4/4] 生成排名...")
+        logger.info("[4/5] 生成排名...")
         if not predictions.empty:
             top50 = predictor.get_top_n(date.today(), 50)
             from app.models.stock import StockBasic
@@ -237,7 +243,8 @@ def run_pipeline(trade_date: str = None, top_n: int = 0):
         else:
             logger.info("无预测结果，跳过排名生成")
 
-        logger.info("=== 流水线运行完成 ===")
+        # Step 5: 数据采集全部完成
+        logger.info("[5/5] 流水线运行完成")
 
     except Exception as e:
         logger.error(f"流水线运行失败: {e}")

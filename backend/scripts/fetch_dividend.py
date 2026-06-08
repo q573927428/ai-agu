@@ -5,6 +5,7 @@
   python scripts/fetch_dividend.py                       # 拉取全市场所有股票
   python scripts/fetch_dividend.py 000001                 # 拉取单只股票
   python scripts/fetch_dividend.py --batch 500            # 分批拉取，每批N只
+  python scripts/fetch_dividend.py --incremental          # 增量拉取（按最新 ann_date）
 """
 import sys
 import os
@@ -15,7 +16,7 @@ import time
 from datetime import datetime
 from decimal import Decimal
 from loguru import logger
-from sqlalchemy import text
+from sqlalchemy import text, func
 
 from app.utils.db_utils import SessionLocal, engine
 from app.models.stock import StockBasic
@@ -201,6 +202,17 @@ def upsert_events(session, records: list) -> int:
     return total
 
 
+def get_ts_code(stock_code: str) -> str:
+    """根据股票代码前3位判断交易所后缀"""
+    prefix = stock_code[:3]
+    if prefix in {"000", "001", "002", "003", "300", "301"}:
+        return f"{stock_code}.SZ"
+    elif prefix in {"600", "601", "603", "605", "688", "689"}:
+        return f"{stock_code}.SH"
+    else:
+        return f"{stock_code}.BJ"
+
+
 def fetch_all_stocks(batch_size: int = 500, delay: float = 0.3):
     """拉取全市场所有股票的分红送股数据"""
     session = SessionLocal()
@@ -222,8 +234,7 @@ def fetch_all_stocks(batch_size: int = 500, delay: float = 0.3):
             logger.info(f"📦 第 {batch_start // batch_size + 1} 批 ({len(batch)} 只)")
 
             for i, code in enumerate(batch):
-                # 补零到6位
-                ts_code_full = f"{code.zfill(6)}.SZ" if code.startswith(("0", "3")) else f"{code.zfill(6)}.SH"
+                ts_code_full = get_ts_code(code)
                 records = fetch_stock_dividend(ts_code_full, delay=delay)
                 if records:
                     written = upsert_events(session, records)
@@ -275,16 +286,108 @@ def fetch_single_stock(code: str, delay: float = 0.3):
         session.close()
 
 
+def fetch_dividend_incremental(session=None, batch_size: int = 500, delay: float = 0.3) -> int:
+    """
+    增量拉取分红送股数据
+
+    判断逻辑：
+      查询 stock_event 表的最大 imp_ann_date（实施公告日）
+      - 如果为 NULL → 从未拉取过 → 调用全量拉取 fetch_all_stocks()
+      - 如果不为 NULL → 已有数据，遍历全市场股票
+        → 每只调用 pro.dividend(ts_code=...)
+        → 只保留 imp_ann_date >= latest_imp_ann_date 的记录
+        → upsert 写入（已有去重逻辑）
+
+    Args:
+        session: 可复用外部 session，None 则内部创建
+        batch_size: 每批股票数
+        delay: 请求间隔秒数
+
+    Returns:
+        int: 写入的记录数
+    """
+    close_session = False
+    if session is None:
+        session = SessionLocal()
+        close_session = True
+
+    try:
+        # 查询库中最新的 imp_ann_date
+        latest_imp_ann_date = session.query(func.max(StockEvent.imp_ann_date)).scalar()
+
+        if latest_imp_ann_date is None:
+            logger.info("📋 数据库无分红数据，执行全量拉取...")
+            fetch_all_stocks(batch_size=batch_size, delay=delay)
+            total = session.query(StockEvent).count()
+            logger.info(f"✅ 全量拉取完成，共 {total} 条记录")
+            return total
+
+        logger.info(f"📋 增量模式：库内最新实施公告日 {latest_imp_ann_date}，拉取此后新数据")
+
+        # 获取所有股票
+        stocks = session.query(StockBasic.stock_code).all()
+        stock_codes = [s[0] for s in stocks]
+        logger.info(f"📋 共 {len(stock_codes)} 只股票待处理")
+
+        total_records = 0
+        total_stocks = 0
+        start_time = time.time()
+
+        for batch_start in range(0, len(stock_codes), batch_size):
+            batch = stock_codes[batch_start:batch_start + batch_size]
+            batch_records = 0
+
+            logger.info(f"📦 第 {batch_start // batch_size + 1} 批 ({len(batch)} 只)")
+
+            for i, code in enumerate(batch):
+                ts_code_full = get_ts_code(code)
+                records = fetch_stock_dividend(ts_code_full, delay=delay)
+
+                # 只保留 imp_ann_date >= latest_imp_ann_date 的增量记录
+                # 同时也保留 imp_ann_date 为空的记录（容错）
+                new_records = [
+                    r for r in records
+                    if r.imp_ann_date is None or r.imp_ann_date >= latest_imp_ann_date
+                ]
+
+                if new_records:
+                    written = upsert_events(session, new_records)
+                    if written > 0:
+                        batch_records += written
+                        total_records += written
+                        total_stocks += 1
+
+                if (i + 1) % 50 == 0:
+                    elapsed = time.time() - start_time
+                    logger.info(f"   进度 {batch_start + i + 1}/{len(stock_codes)} | 增 {total_records} 条 | 耗时 {elapsed:.1f}s")
+
+            logger.info(f"  ✅ 本批增量完成: {batch_records} 条")
+
+        elapsed = time.time() - start_time
+        logger.info(f"\n🎉 增量拉取完成！")
+        logger.info(f"  有增量事件股票: {total_stocks} 只")
+        logger.info(f"  增量事件数: {total_records} 条")
+        logger.info(f"  总耗时: {elapsed:.1f}s")
+        return total_records
+
+    finally:
+        if close_session:
+            session.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="拉取分红送股数据")
     parser.add_argument("stock_code", nargs="?", default=None, help="股票代码（可选，不传则拉取全市场）")
     parser.add_argument("--batch", type=int, default=500, help="每批股票数（默认500）")
     parser.add_argument("--delay", type=float, default=0.3, help="请求间隔秒数")
+    parser.add_argument("--incremental", action="store_true", help="增量拉取（按最新ann_date）")
     args = parser.parse_args()
 
     ensure_tables_exist()
 
-    if args.stock_code:
+    if args.incremental:
+        fetch_dividend_incremental(batch_size=args.batch, delay=args.delay)
+    elif args.stock_code:
         fetch_single_stock(args.stock_code, delay=args.delay)
     else:
         fetch_all_stocks(batch_size=args.batch, delay=args.delay)
