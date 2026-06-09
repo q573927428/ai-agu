@@ -23,9 +23,9 @@
 
     <el-card shadow="hover">
       <el-table :data="stockList" v-loading="loading" stripe @row-click="goToStock" @sort-change="onSortChange" style="cursor: pointer" :default-sort="{ prop: 'pct_chg', order: 'descending' }">
-        <el-table-column prop="stock_code" label="股票代码" width="110" sortable="custom" />
-        <el-table-column prop="stock_name" label="股票名称" width="140" />
-        <el-table-column prop="close_price" label="收盘价" width="110" sortable="custom">
+        <el-table-column prop="stock_code" label="代码" width="100" sortable="custom" />
+        <el-table-column prop="stock_name" label="股票名称" width="100" />
+        <el-table-column prop="close_price" label="收盘价" width="90" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.close_price != null">{{ row.close_price.toFixed(2) }}</span>
             <span v-else>--</span>
@@ -33,7 +33,7 @@
         </el-table-column>
         <el-table-column prop="pct_chg" label="涨跌幅" width="110" sortable="custom">
           <template #default="{ row }">
-            <span v-if="row.pct_chg != null" :style="{ color: row.pct_chg > 0 ? '#4caf50' : row.pct_chg < 0 ? '#f44336' : '' }">
+            <span v-if="row.pct_chg != null" :style="{ color: row.pct_chg > 0 ? '#f44336' : row.pct_chg < 0 ? '#4caf50' : '' }">
               {{ row.pct_chg > 0 ? '+' : '' }}{{ row.pct_chg.toFixed(2) }}%
             </span>
             <span v-else>--</span>
@@ -53,31 +53,31 @@
             <span v-else>--</span>
           </template>
         </el-table-column>
-        <el-table-column prop="pe_ttm" label="市盈率" width="110" sortable="custom">
+        <el-table-column prop="pe_ttm" label="市盈率" width="100" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.pe_ttm != null">{{ row.pe_ttm.toFixed(2) }}</span>
             <span v-else>--</span>
           </template>
         </el-table-column>
-        <el-table-column prop="pb" label="市净率" width="110" sortable="custom">
+        <el-table-column prop="pb" label="市净率" width="100" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.pb != null">{{ row.pb.toFixed(2) }}</span>
             <span v-else>--</span>
           </template>
         </el-table-column>
-        <el-table-column prop="ps_ttm" label="市销率" width="110" sortable="custom">
+        <el-table-column prop="ps_ttm" label="市销率" width="100" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.ps_ttm != null">{{ row.ps_ttm.toFixed(2) }}</span>
             <span v-else>--</span>
           </template>
         </el-table-column>
-        <el-table-column prop="dv_ratio" label="股息率" width="110" sortable="custom">
+        <el-table-column prop="dv_ratio" label="股息率" width="100" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.dv_ratio != null">{{ row.dv_ratio.toFixed(2) }}%</span>
             <span v-else>--</span>
           </template>
         </el-table-column>
-        <el-table-column prop="turnover_rate" label="换手率" width="110" sortable="custom">
+        <el-table-column prop="turnover_rate" label="换手率" width="100" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.turnover_rate != null">{{ row.turnover_rate.toFixed(2) }}%</span>
             <span v-else>--</span>
@@ -89,25 +89,25 @@
             <span v-else>--</span>
           </template>
         </el-table-column>
-        <el-table-column prop="total_mv" label="总市值" width="150" sortable="custom">
+        <el-table-column prop="total_mv" label="总市值" width="130" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.total_mv != null">{{ row.total_mv.toLocaleString() }}</span>
             <span v-else>--</span>
           </template>
         </el-table-column>
-        <el-table-column prop="exchange" label="交易所" width="100">
+        <el-table-column prop="exchange" label="交易所" width="70">
           <template #default="{ row }">
             <el-tag v-if="row.exchange === 'SH'" type="danger" size="small">沪</el-tag>
             <el-tag v-else-if="row.exchange === 'SZ'" type="success" size="small">深</el-tag>
             <el-tag v-else type="info" size="small">{{ row.exchange || "--" }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="industry" label="行业" width="120">
+        <el-table-column prop="industry" label="行业" width="100">
           <template #default="{ row }">
             {{ row.industry || "--" }}
           </template>
         </el-table-column>
-        <el-table-column prop="trade_date" label="最新行情日期" min-width="130" sortable="custom">
+        <el-table-column prop="trade_date" label="最新日期" min-width="120" sortable="custom">
           <template #default="{ row }">
             {{ row.trade_date || "--" }}
           </template>
