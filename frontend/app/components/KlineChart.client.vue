@@ -80,8 +80,10 @@ const chartOption = computed(() => {
     const predReturn = pred.predicted_return; // 小数形式，如 0.0367 表示 +3.67%
     const predOpen = lastClose;
     const predClose = +(lastClose * (1 + predReturn)).toFixed(2);
-    const predLow = +(lastClose * 0.98).toFixed(2);
-    const predHigh = +(predClose * 1.02).toFixed(2);
+    const bodyLow = Math.min(predOpen, predClose);
+    const bodyHigh = Math.max(predOpen, predClose);
+    const predLow = +(bodyLow * 0.98).toFixed(2);
+    const predHigh = +(bodyHigh * 1.02).toFixed(2);
     const predDate = pred.predict_date ? `预测 ${pred.predict_date}` : "预测次日";
 
     dates.push(predDate);
