@@ -45,8 +45,28 @@ class StockService:
 
     def search_stocks(self, keyword: str) -> list:
         """搜索股票（按代码或名称），关联 stock_daily_basic 获取基本面数据"""
+        exchange_map = {"SSE": "SH", "SZSE": "SZ", "BSE": "BJ"}
+
+        # 相关子查询：获取每只股票的最新预测收益率和置信度
+        latest_return_subq = (
+            self.db.query(Prediction.predicted_return)
+            .filter(Prediction.stock_code == StockBasic.stock_code)
+            .order_by(Prediction.predict_date.desc())
+            .limit(1)
+            .correlate(StockBasic)
+            .label("predicted_return")
+        )
+        latest_conf_subq = (
+            self.db.query(Prediction.confidence)
+            .filter(Prediction.stock_code == StockBasic.stock_code)
+            .order_by(Prediction.predict_date.desc())
+            .limit(1)
+            .correlate(StockBasic)
+            .label("confidence")
+        )
+
         rows = (
-            self.db.query(StockBasic, StockDailyBasic)
+            self.db.query(StockBasic, StockDailyBasic, latest_return_subq, latest_conf_subq)
             .outerjoin(
                 StockDailyBasic,
                 (StockBasic.stock_code == StockDailyBasic.stock_code)
@@ -60,9 +80,8 @@ class StockService:
             .all()
         )
 
-        exchange_map = {"SSE": "SH", "SZSE": "SZ", "BSE": "BJ"}
         results = []
-        for s, d in rows:
+        for s, d, predicted_return, confidence in rows:
             exchange_tag = exchange_map.get(s.exchange, s.exchange)
             results.append({
                 "stock_code": s.stock_code,
@@ -79,6 +98,8 @@ class StockService:
                 "dv_ratio": float(d.dv_ratio) if d and d.dv_ratio else None,
                 "total_mv": float(d.total_mv) if d and d.total_mv else None,
                 "trade_date": str(s.trade_date) if s.trade_date else None,
+                "predicted_return": float(predicted_return) if predicted_return is not None else None,
+                "confidence": float(confidence) if confidence is not None else None,
             })
         return results
 
@@ -117,9 +138,27 @@ class StockService:
             "BSE": "BJ",
         }
 
-        # 1. 基础查询 — LEFT JOIN stock_daily_basic 获取最新基本面数据
+        # 相关子查询：获取每只股票的最新预测收益率和置信度
+        latest_return_subq = (
+            self.db.query(Prediction.predicted_return)
+            .filter(Prediction.stock_code == StockBasic.stock_code)
+            .order_by(Prediction.predict_date.desc())
+            .limit(1)
+            .correlate(StockBasic)
+            .label("predicted_return")
+        )
+        latest_conf_subq = (
+            self.db.query(Prediction.confidence)
+            .filter(Prediction.stock_code == StockBasic.stock_code)
+            .order_by(Prediction.predict_date.desc())
+            .limit(1)
+            .correlate(StockBasic)
+            .label("confidence")
+        )
+
+        # 1. 基础查询 — LEFT JOIN stock_daily_basic 获取最新基本面数据，加相关子查询获取最新预测
         query = (
-            self.db.query(StockBasic, StockDailyBasic)
+            self.db.query(StockBasic, StockDailyBasic, latest_return_subq, latest_conf_subq)
             .outerjoin(
                 StockDailyBasic,
                 (StockBasic.stock_code == StockDailyBasic.stock_code)
@@ -132,7 +171,7 @@ class StockService:
         total_query = self.db.query(StockBasic).filter(StockBasic.is_active == 1)
         total = total_query.count()
 
-        # 2. 排序 — 支持从两个表取排序字段
+        # 2. 排序 — 支持从两个表取排序字段（含预测相关子查询字段）
         sort_col_map = {
             "close_price": StockBasic.close_price,
             "pct_chg": StockBasic.pct_chg,
@@ -143,6 +182,8 @@ class StockService:
             "ps_ttm": StockDailyBasic.ps_ttm,
             "dv_ratio": StockDailyBasic.dv_ratio,
             "total_mv": StockDailyBasic.total_mv,
+            "predicted_return": latest_return_subq,
+            "confidence": latest_conf_subq,
         }
         order_func = asc if sort_order == "asc" else desc
 
@@ -158,7 +199,7 @@ class StockService:
 
         # 4. 组装返回
         enriched = []
-        for s, d in rows:
+        for s, d, predicted_return, confidence in rows:
             exchange_tag = exchange_map.get(s.exchange, s.exchange)
             enriched.append({
                 "stock_code": s.stock_code,
@@ -177,6 +218,8 @@ class StockService:
                 "ps_ttm": float(d.ps_ttm) if d and d.ps_ttm else None,
                 "dv_ratio": float(d.dv_ratio) if d and d.dv_ratio else None,
                 "total_mv": float(d.total_mv) if d and d.total_mv else None,
+                "predicted_return": float(predicted_return) if predicted_return is not None else None,
+                "confidence": float(confidence) if confidence is not None else None,
             })
         return enriched, total
 

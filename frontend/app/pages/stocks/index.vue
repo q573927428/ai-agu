@@ -39,6 +39,20 @@
             <span v-else>--</span>
           </template>
         </el-table-column>
+        <el-table-column label="次日预测" width="110" sortable="custom" prop="predicted_return">
+          <template #default="{ row }">
+            <span v-if="row.predicted_return != null" :style="{ color: row.predicted_return > 0.05 ? '#f44336' : row.predicted_return > 0 ? '#e6a23c' : row.predicted_return < 0 ? '#4caf50' : '' }">
+              {{ (row.predicted_return * 100).toFixed(2) }}%
+            </span>
+            <span v-else>--</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="置信度" width="90" sortable="custom" prop="confidence">
+          <template #default="{ row }">
+            <span v-if="row.confidence != null">{{ (row.confidence * 100).toFixed(1) }}%</span>
+            <span v-else>--</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="pe_ttm" label="市盈率" width="110" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.pe_ttm != null">{{ row.pe_ttm.toFixed(2) }}</span>
@@ -214,6 +228,8 @@ function onSortChange(data: { prop: string | null; order: string | null }) {
     dv_ratio: "dv_ratio",
     total_mv: "total_mv",
     trade_date: "trade_date",
+    predicted_return: "predicted_return",
+    confidence: "confidence",
   };
 
   if (prop && order && sortFieldMap[prop]) {
