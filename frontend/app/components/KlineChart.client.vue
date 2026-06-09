@@ -25,6 +25,11 @@ const props = defineProps<{
   klineData: any[];
   klineLoading: boolean;
   klineEvents?: any[]; // 事件标记数据
+  prediction?: {
+    predicted_return?: number | null;
+    confidence?: number | null;
+    predict_date?: string;
+  } | null;
 }>();
 
 const klineLoading = computed(() => props.klineLoading);
@@ -48,15 +53,49 @@ const chartOption = computed(() => {
   if (!hasKlineData.value) return {};
 
   const dates = props.klineData.map((d: any) => d.trade_date);
-  const ohlcData = props.klineData.map((d: any) => [
+  let ohlcData: any[] = props.klineData.map((d: any) => [
     d.open ?? d.close ?? 0,
     d.close ?? d.open ?? 0,
     d.low ?? Math.min(d.open ?? 0, d.close ?? 0),
     d.high ?? Math.max(d.open ?? 0, d.close ?? 0),
   ]);
-  const volumes = props.klineData.map((d: any) => d.volume);
+  let volumes = props.klineData.map((d: any) => d.volume);
 
   const closes = props.klineData.map((d: any) => d.close);
+
+  // 预测K线索引（如果有）
+  const predIdx = props.prediction?.predicted_return != null && dates.length > 0
+    ? dates.length
+    : -1;
+
+  // 预测价格（用作虚线）
+  const predPrice = props.prediction?.predicted_return != null && closes.length > 0
+    ? +(closes[closes.length - 1] * (1 + props.prediction.predicted_return!)).toFixed(2)
+    : null;
+
+  // 添加预测K线（灰色实体）
+  const pred = props.prediction;
+  if (pred && pred.predicted_return != null && dates.length > 0) {
+    const lastClose = closes[closes.length - 1];
+    const predReturn = pred.predicted_return; // 小数形式，如 0.0367 表示 +3.67%
+    const predOpen = lastClose;
+    const predClose = +(lastClose * (1 + predReturn)).toFixed(2);
+    const predLow = +(lastClose * 0.98).toFixed(2);
+    const predHigh = +(predClose * 1.02).toFixed(2);
+    const predDate = pred.predict_date ? `预测 ${pred.predict_date}` : "预测次日";
+
+    dates.push(predDate);
+    ohlcData.push({
+      value: [predOpen, predClose, predLow, predHigh],
+      itemStyle: {
+        color: "#999999",
+        color0: "#999999",
+        borderColor: "#999999",
+        borderColor0: "#999999",
+      },
+    });
+    volumes.push(0);
+  }
   const ma5 = calcMA(5, closes);
   const ma10 = calcMA(10, closes);
   const ma20 = calcMA(20, closes);
@@ -123,8 +162,8 @@ const chartOption = computed(() => {
       textStyle: { fontSize: 11 },
     },
     grid: [
-      { left: "6%", right: "4%", top: "12%", height: "58%" },
-      { left: "6%", right: "4%", top: "75%", height: "18%" },
+      { left: "6%", right: "6%", top: "12%", height: "58%" },
+      { left: "6%", right: "6%", top: "75%", height: "18%" },
     ],
     xAxis: [
       {
@@ -204,13 +243,32 @@ const chartOption = computed(() => {
           label: {
             show: true,
             position: "end",
-            color: "#f56c6c",
+            color: "#ffffff",
             fontSize: 11,
-            fontWeight: "bold",
+            backgroundColor: "#f56c6c",
+            padding: [2, 5],
+            borderRadius: 3,
             formatter: () => `${closes[closes.length - 1]?.toFixed(2)}`,
           },
           data: [
             { yAxis: closes[closes.length - 1] ?? 0 },
+            // 预测价格虚线（灰色）
+            ...(predPrice != null
+              ? [{
+                  yAxis: predPrice,
+                  lineStyle: { type: "dashed", color: "#999999", width: 1 },
+                  label: {
+                    show: true,
+                    position: "end",
+                    color: "#ffffff",
+                    fontSize: 11,
+                    backgroundColor: "#888888",
+                    padding: [2, 5],
+                    borderRadius: 3,
+                    formatter: () => `${predPrice}`,
+                  },
+                }]
+              : []),
             // 事件标记（仅底部文字，鼠标经过时 crosshair 自动显示竖线）
             ...eventMarkLines,
           ],
@@ -260,7 +318,7 @@ const chartOption = computed(() => {
 <style scoped>
 .chart-container {
   width: 100%;
-  height: 588px;
+  height: 558px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -271,7 +329,7 @@ const chartOption = computed(() => {
 }
 @media (max-width: 900px) {
   .chart-container {
-    height: 460px;
+    height: 430px;
   }
 }
 </style>

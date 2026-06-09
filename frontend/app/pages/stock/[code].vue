@@ -115,7 +115,7 @@
                 </el-radio-group>
               </div>
             </template>
-            <KlineChart :kline-data="klineData" :kline-loading="klineLoading" :kline-events="klineEvents" />
+            <KlineChart :kline-data="klineData" :kline-loading="klineLoading" :kline-events="klineEvents" :prediction="stockPrediction" />
           </el-card>
         </div>
       </div>
