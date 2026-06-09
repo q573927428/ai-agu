@@ -84,10 +84,33 @@ class LightGBMModel:
         return result
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
-        """预测"""
+        """预测 — 自动对齐特征列，兼容因子数量变化"""
         if self.model is None:
             logger.warning("模型未加载，返回随机值")
             return np.random.randn(len(X)) * 0.01
+
+        # 获取模型训练时的特征名列表
+        model_features = self.model.feature_name()
+        input_features = list(X.columns)
+
+        # 如果特征数量不一致，进行对齐
+        if set(model_features) != set(input_features):
+            missing = set(model_features) - set(input_features)
+            extra = set(input_features) - set(model_features)
+            if missing:
+                logger.warning(f"特征对齐: 缺少 {len(missing)} 个特征 ({sorted(missing)[:5]}...)，填充0")
+            if extra:
+                logger.warning(f"特征对齐: 多余 {len(extra)} 个特征 ({sorted(extra)[:5]}...)，已剔除")
+
+            # 只取模型需要的特征，缺失的补0
+            aligned = pd.DataFrame(index=X.index)
+            for col in model_features:
+                if col in X.columns:
+                    aligned[col] = X[col].values
+                else:
+                    aligned[col] = 0.0
+            X = aligned
+
         return self.model.predict(X)
 
     def save_model(self, path: str):

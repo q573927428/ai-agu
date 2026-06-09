@@ -387,11 +387,11 @@ def run_pipeline(trade_date: str, top_n: int = 0, args=None):
             engine.save_factors(df)
         logger.info(f"✅ 因子计算完成: {len(df)} 只股票")
 
-        # Step 3: 从 stock_daily_basic 同步最新行情快照（close_price/pct_chg）到 stock_basic
-        # 基本面指标（pe_ttm/pb/turnover_rate 等）前端直接查 stock_daily_basic 表
+        # Step 3: 从 stock_daily_basic 同步最新行情及基本面快照到 stock_basic
+        # 行情字段：close_price；基本面字段：pe_ttm/pb/turnover_rate/volume_ratio。
         from app.models.stock import StockBasic as SB
         from app.models.stock_daily_basic import StockDailyBasic
-        logger.info("[3/8] 同步 daily_basic 行情快照到 stock_basic...")
+        logger.info("[3/8] 同步 daily_basic 行情及基本面快照到 stock_basic...")
         trade_date_obj = _parse_trade_date(trade_date)
         latest_records = (
             db.query(StockDailyBasic)

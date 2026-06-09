@@ -58,6 +58,12 @@ class FactorStore(Base):
     industry_fund_flow = Column(DECIMAL(12, 6), comment="行业资金净流入(亿元)")
     industry_dispersion = Column(DECIMAL(12, 6), comment="行业离散度(行业内个股收益标准差)")
 
+    # 个股基本面因子（来自 stock_daily_basic）- 真实换手率/股息率/市值等
+    stock_dv_ratio = Column(DECIMAL(12, 6), comment="个股股息率(%)")
+    stock_dv_ttm = Column(DECIMAL(12, 6), comment="个股股息率(TTM,%)")
+    stock_free_turnover = Column(DECIMAL(12, 6), comment="个股自由流通换手率(%)")
+    stock_circ_mv = Column(DECIMAL(16, 2), comment="个股流通市值(万元)")
+
     # 个股因子 (20) - 反映个股自身特征
     stock_return_1d = Column(DECIMAL(12, 6), comment="个股1日收益率")
     stock_return_5d = Column(DECIMAL(12, 6), comment="个股5日收益率")

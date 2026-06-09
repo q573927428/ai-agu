@@ -25,7 +25,7 @@
       <el-table :data="stockList" v-loading="loading" stripe @row-click="goToStock" @sort-change="onSortChange" style="cursor: pointer" :default-sort="{ prop: 'pct_chg', order: 'descending' }">
         <el-table-column prop="stock_code" label="股票代码" width="110" sortable="custom" />
         <el-table-column prop="stock_name" label="股票名称" width="140" />
-        <el-table-column prop="close_price" label="收盘价" width="120" sortable="custom">
+        <el-table-column prop="close_price" label="收盘价" width="110" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.close_price != null">{{ row.close_price.toFixed(2) }}</span>
             <span v-else>--</span>
@@ -69,13 +69,13 @@
             <span v-else>--</span>
           </template>
         </el-table-column>
-        <el-table-column prop="volume_ratio" label="量比" width="110" sortable="custom">
+        <el-table-column prop="volume_ratio" label="量比" width="90" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.volume_ratio != null">{{ row.volume_ratio.toFixed(2) }}</span>
             <span v-else>--</span>
           </template>
         </el-table-column>
-        <el-table-column prop="total_mv" label="总市值" width="120" sortable="custom">
+        <el-table-column prop="total_mv" label="总市值" width="150" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.total_mv != null">{{ row.total_mv.toLocaleString() }}</span>
             <span v-else>--</span>

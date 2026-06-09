@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.models.factor import FactorStore
 from app.models.stock_daily import StockDaily
+from app.models.stock_daily_basic import StockDailyBasic
 from app.models.macro import MacroData
 from app.models.fina_indicator import FinaIndicator
 from app.models.balancesheet import Balancesheet
@@ -532,6 +533,21 @@ class FactorEngine:
 
         return {r.stock_code: r for r in records}
 
+    def _batch_load_latest_daily_basic(self, stock_codes: List[str], trade_date: str) -> Dict[str, StockDailyBasic]:
+        """批量加载每只股票在指定交易日的 daily_basic 基本面数据"""
+        if not stock_codes:
+            return {}
+        trade_date_obj = _parse_trade_date(trade_date)
+        records = (
+            self.db.query(StockDailyBasic)
+            .filter(
+                StockDailyBasic.stock_code.in_(stock_codes),
+                StockDailyBasic.trade_date == trade_date_obj,
+            )
+            .all()
+        )
+        return {r.stock_code: r for r in records}
+
     def compute_stock_factors(self, stock_code: str, trade_date: str) -> dict:
         """个股因子计算（单只股票版，兼容旧调用）"""
         return self._compute_stock_factors_from_data(
@@ -549,8 +565,12 @@ class FactorEngine:
         daily_records: Optional[List] = None,
         fina: Optional[FinaIndicator] = None,
         bs: Optional[Balancesheet] = None,
+        daily_basic: Optional[StockDailyBasic] = None,
     ) -> dict:
-        """从已加载的数据计算单只股票因子"""
+        """从已加载的数据计算单只股票因子
+
+        集成 stock_daily_basic 表数据，使用真实换手率/PE/PB/PS/股息率等替代间接计算。
+        """
         from app.utils.date_utils import get_previous_n_trade_days
 
         if daily_records is None:
@@ -576,9 +596,11 @@ class FactorEngine:
         closes = [_safe_float(r.close) for r in daily_records if r.close]
         volumes = [_safe_float(r.volume) for r in daily_records if r.volume]
         amounts = [_safe_float(r.amount) for r in daily_records if r.amount]
-        # 注意：stock_daily 表中无换手率字段，此处用 pct_chg 作为波动代理
-        # 真实换手率需从 Tushare daily_basic 接口获取
-        turnovers = [_safe_float(r.pct_chg) for r in daily_records if r.pct_chg is not None]
+        # 用 daily_basic 的真实换手率替代 pct_chg 代理
+        if daily_basic and daily_basic.turnover_rate is not None:
+            turnovers = [_safe_float(daily_basic.turnover_rate)]
+        else:
+            turnovers = [_safe_float(r.pct_chg) for r in daily_records if r.pct_chg is not None]
 
         if len(closes) < 5:
             return {}
@@ -599,6 +621,8 @@ class FactorEngine:
                 .first()
             )
 
+        close_val = _safe_float(latest.close) if latest.close else 0
+
         factors = {}
 
         # S01-S03: 收益率因子
@@ -615,26 +639,37 @@ class FactorEngine:
         vol_20 = np.mean(volumes[-20:]) if len(volumes) >= 20 else (vol_5 or 1)
         factors["stock_volume_ratio_5d"] = float(vol_5 / vol_20) if vol_20 > 0 else 1
 
-        # S07: 换手率
-        factors["stock_turnover_rate_5d"] = float(np.mean(turnovers[-5:])) if len(turnovers) >= 5 else 0
-
-        # S08: PE-TTM
-        eps_val = _safe_float(fina.eps) if fina and fina.eps and _safe_float(fina.eps) > 0 else 0
-        close_val = _safe_float(latest.close) if latest.close else 0
-        if eps_val > 0 and close_val > 0:
-            factors["stock_pe_ttm"] = float(close_val / eps_val)
+        # S07: 换手率 — 使用 daily_basic 真实换手率（若有）
+        if daily_basic and daily_basic.turnover_rate is not None:
+            factors["stock_turnover_rate_5d"] = _safe_float(daily_basic.turnover_rate)
         else:
-            factors["stock_pe_ttm"] = 0
+            factors["stock_turnover_rate_5d"] = float(np.mean(turnovers[-5:])) if len(turnovers) >= 5 else 0
 
-        # S09: PB
-        bps_val = _safe_float(fina.bps) if fina and fina.bps and _safe_float(fina.bps) > 0 else 0
-        if bps_val > 0 and close_val > 0:
-            factors["stock_pb"] = float(close_val / bps_val)
+        # S08: PE-TTM — 优先使用 daily_basic 的 pe_ttm，回退到 close/eps 计算
+        if daily_basic and daily_basic.pe_ttm is not None and _safe_float(daily_basic.pe_ttm) > 0:
+            factors["stock_pe_ttm"] = _safe_float(daily_basic.pe_ttm)
         else:
-            factors["stock_pb"] = 0
+            eps_val = _safe_float(fina.eps) if fina and fina.eps and _safe_float(fina.eps) > 0 else 0
+            if eps_val > 0 and close_val > 0:
+                factors["stock_pe_ttm"] = float(close_val / eps_val)
+            else:
+                factors["stock_pe_ttm"] = 0
 
-        # S10: PS-TTM
-        factors["stock_ps_ttm"] = 0
+        # S09: PB — 优先使用 daily_basic 的 pb，回退到 close/bps 计算
+        if daily_basic and daily_basic.pb is not None and _safe_float(daily_basic.pb) > 0:
+            factors["stock_pb"] = _safe_float(daily_basic.pb)
+        else:
+            bps_val = _safe_float(fina.bps) if fina and fina.bps and _safe_float(fina.bps) > 0 else 0
+            if bps_val > 0 and close_val > 0:
+                factors["stock_pb"] = float(close_val / bps_val)
+            else:
+                factors["stock_pb"] = 0
+
+        # S10: PS-TTM — 使用 daily_basic 的 ps_ttm
+        if daily_basic and daily_basic.ps_ttm is not None:
+            factors["stock_ps_ttm"] = _safe_float(daily_basic.ps_ttm)
+        else:
+            factors["stock_ps_ttm"] = 0
 
         # S11: ROE
         factors["stock_roe_ttm"] = _safe_float(fina.roe) if fina and fina.roe is not None else 0
@@ -660,20 +695,24 @@ class FactorEngine:
         # S18: 5日反转
         factors["stock_reversal_5d"] = -factors["stock_return_5d"]
 
-        # S19: 规模因子
-        if bs is None:
-            bs = (
-                self.db.query(Balancesheet)
-                .filter(Balancesheet.stock_code == stock_code)
-                .order_by(Balancesheet.end_date.desc())
-                .first()
-            )
-        if bs and bs.cap_stk and close_val > 0:
-            total_shares = _safe_float(bs.cap_stk)
-            market_cap = close_val * total_shares
-            factors["stock_size_factor"] = float(np.log(market_cap)) if market_cap > 0 else 0
+        # S19: 规模因子 — 优先使用 daily_basic 的 total_mv（总市值），回退到 close * cap_stk
+        if daily_basic and daily_basic.total_mv is not None and _safe_float(daily_basic.total_mv) > 0:
+            total_mv = _safe_float(daily_basic.total_mv)
+            factors["stock_size_factor"] = float(np.log(total_mv)) if total_mv > 0 else 0
         else:
-            factors["stock_size_factor"] = 0
+            if bs is None:
+                bs = (
+                    self.db.query(Balancesheet)
+                    .filter(Balancesheet.stock_code == stock_code)
+                    .order_by(Balancesheet.end_date.desc())
+                    .first()
+                )
+            if bs and bs.cap_stk and close_val > 0:
+                total_shares = _safe_float(bs.cap_stk)
+                market_cap = close_val * total_shares
+                factors["stock_size_factor"] = float(np.log(market_cap)) if market_cap > 0 else 0
+            else:
+                factors["stock_size_factor"] = 0
 
         # S20: 非流动性
         if len(returns) >= 20 and len(amounts) >= 20:
@@ -685,6 +724,31 @@ class FactorEngine:
             factors["stock_illiquidity"] = float(np.mean(illiq_vals)) if len(illiq_vals) > 0 else 0
         else:
             factors["stock_illiquidity"] = 0
+
+        # ====== 新增基本面因子（来自 stock_daily_basic）======
+        # S21: 股息率
+        if daily_basic and daily_basic.dv_ratio is not None:
+            factors["stock_dv_ratio"] = _safe_float(daily_basic.dv_ratio)
+        else:
+            factors["stock_dv_ratio"] = 0
+
+        # S22: 股息率 TTM
+        if daily_basic and daily_basic.dv_ttm is not None:
+            factors["stock_dv_ttm"] = _safe_float(daily_basic.dv_ttm)
+        else:
+            factors["stock_dv_ttm"] = 0
+
+        # S23: 自由流通换手率
+        if daily_basic and daily_basic.turnover_rate_f is not None:
+            factors["stock_free_turnover"] = _safe_float(daily_basic.turnover_rate_f)
+        else:
+            factors["stock_free_turnover"] = 0
+
+        # S24: 流通市值
+        if daily_basic and daily_basic.circ_mv is not None:
+            factors["stock_circ_mv"] = _safe_float(daily_basic.circ_mv)
+        else:
+            factors["stock_circ_mv"] = 0
 
         return factors
 
@@ -738,6 +802,9 @@ class FactorEngine:
 
         logger.info(f"批量加载 {len(stock_codes)} 只股票的资产负债表...")
         bs_data = self._batch_load_latest_balancesheet(stock_codes)
+
+        logger.info(f"批量加载 {len(stock_codes)} 只股票的 daily_basic 基本面数据...")
+        daily_basic_data = self._batch_load_latest_daily_basic(stock_codes, trade_date)
         # ==========================
 
         all_factors = []
@@ -753,6 +820,7 @@ class FactorEngine:
                 daily_records=daily_records,
                 fina=fina_data.get(stock_code),
                 bs=bs_data.get(stock_code),
+                daily_basic=daily_basic_data.get(stock_code),
             )
             if not stock_factors:
                 continue
