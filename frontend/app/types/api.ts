@@ -41,8 +41,8 @@ export interface StockBasic {
 
 /** 股票日数据 */
 export interface StockDaily {
-  stock_code: string;
-  trade_date: string;
+  stock_code?: string;
+  trade_date?: string;
   open: number | null;
   high: number | null;
   low: number | null;
@@ -51,11 +51,20 @@ export interface StockDaily {
   volume: number | null;
   amount: number | null;
   pct_chg: number | null;
-  turnover_rate: number | null;
+}
+
+/** 每日基本面指标（来自 stock_daily_basic 表） */
+export interface StockDailyBasic {
+  trade_date: string | null;
+  close: number | null;
   pe_ttm: number | null;
   pb: number | null;
+  turnover_rate: number | null;
+  volume_ratio: number | null;
+  ps_ttm: number | null;
+  dv_ttm: number | null;
   total_mv: number | null;
-  float_mv: number | null;
+  circ_mv: number | null;
 }
 
 /** 股票预测（含实际收益率对比） */
@@ -78,6 +87,7 @@ export interface PredictionHistoryData {
 export interface StockDetail {
   basic: StockBasic;
   latest_daily: StockDaily | null;
+  latest_daily_basic: StockDailyBasic | null;
   latest_prediction: StockPrediction | null;
 }
 

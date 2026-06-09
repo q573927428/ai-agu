@@ -35,7 +35,17 @@ from scripts.fetch_real_data import (
     fetch_dates_batch,
     fetch_macro_data,
     fetch_financial_data,
+    fetch_daily_basic_batch,
 )
+
+
+def _parse_trade_date(trade_date: str | date | datetime) -> date:
+    """统一交易日期输入"""
+    if isinstance(trade_date, datetime):
+        return trade_date.date()
+    if isinstance(trade_date, date):
+        return trade_date
+    return datetime.strptime(trade_date, "%Y-%m-%d").date()
 
 
 def _check_and_train_model(db: Session, trade_date: str) -> bool:
@@ -151,6 +161,7 @@ def parse_args():
     parser.add_argument("--skip-stock-basic", action="store_true",
                         help="跳过股票基础信息拉取")
     parser.add_argument("--skip-index", action="store_true", help="跳过指数行情拉取")
+    parser.add_argument("--skip-daily-basic", action="store_true", help="跳过每日基本面指标拉取")
 
     # ---------- 性能参数 ----------
     parser.add_argument("--delay", type=float, default=0.35,
@@ -222,7 +233,19 @@ def run_fetch(args, db: Session) -> list:
         top_n=args.top,
     )
 
-    # ========== ③ 指数行情 ==========
+    # ========== ③ 每日基本面指标 ==========
+    if not args.skip_daily_basic:
+        logger.info(f"\n{'='*50}")
+        logger.info("📊 拉取每日基本面指标 (pro.daily_basic)")
+        logger.info(f"{'='*50}")
+        from app.models.stock_daily_basic import StockDailyBasic
+        daily_basic_count = db.query(StockDailyBasic).count()
+        if daily_basic_count > 0 and args.history == 0 and len(args.dates) <= 1:
+            fetch_daily_basic_batch(db, dates[-1:], delay=args.delay, top_n=args.top)
+        else:
+            fetch_daily_basic_batch(db, dates, delay=args.delay, top_n=args.top)
+
+    # ========== ④ 指数行情 ==========
     if not args.skip_index:
         logger.info(f"\n{'='*50}")
         logger.info("📊 拉取指数行情 (pro.index_daily)")
@@ -293,14 +316,14 @@ def run_fetch(args, db: Session) -> list:
             logger.info(f"    ✅ {dt} -> {len(index_ts_codes)} 个指数")
         logger.info(f"  ✅ 指数行情拉取完成，库内总计: {db.query(IndexDaily).count()}")
 
-    # ========== ④ 宏观数据 ==========
+    # ========== ⑤ 宏观数据 ==========
     if not args.skip_macro:
         logger.info(f"\n{'='*50}")
         logger.info("📊 拉取宏观经济数据")
         logger.info(f"{'='*50}")
         fetch_macro_data(db, delay=args.delay)
 
-    # ========== ⑤ 财务数据 ==========
+    # ========== ⑥ 财务数据 ==========
     if not args.skip_financial:
         logger.info(f"\n{'='*50}")
         logger.info("📊 拉取上市公司财务数据")
@@ -364,21 +387,26 @@ def run_pipeline(trade_date: str, top_n: int = 0, args=None):
             engine.save_factors(df)
         logger.info(f"✅ 因子计算完成: {len(df)} 只股票")
 
-        # Step 3: 同步 PE/PB/换手率到 stock_basic 快照字段
-        if not df.empty:
-            from app.models.stock import StockBasic as SB
-            logger.info("[3/8] 同步估值数据到 stock_basic...")
-            for _, row in df.iterrows():
-                code = row.get("stock_code")
-                if not code:
-                    continue
-                db.query(SB).filter(SB.stock_code == code).update({
-                    "pe_ttm": float(row["stock_pe_ttm"]) if pd.notna(row.get("stock_pe_ttm")) else None,
-                    "pb": float(row["stock_pb"]) if pd.notna(row.get("stock_pb")) else None,
-                    "turnover_rate": float(row["stock_turnover_rate_5d"]) if pd.notna(row.get("stock_turnover_rate_5d")) else None,
-                })
-            db.commit()
-            logger.info(f"✅ stock_basic 估值数据同步完成: {len(df)} 只股票")
+        # Step 3: 从 stock_daily_basic 同步最新行情快照（close_price/pct_chg）到 stock_basic
+        # 基本面指标（pe_ttm/pb/turnover_rate 等）前端直接查 stock_daily_basic 表
+        from app.models.stock import StockBasic as SB
+        from app.models.stock_daily_basic import StockDailyBasic
+        logger.info("[3/8] 同步 daily_basic 行情快照到 stock_basic...")
+        trade_date_obj = _parse_trade_date(trade_date)
+        latest_records = (
+            db.query(StockDailyBasic)
+            .filter(StockDailyBasic.trade_date == trade_date_obj)
+            .all()
+        )
+        sync_count = 0
+        for rec in latest_records:
+            db.query(SB).filter(SB.stock_code == rec.stock_code).update({
+                "close_price": float(rec.close) if rec.close else None,
+                "trade_date": rec.trade_date,
+            })
+            sync_count += 1
+        db.commit()
+        logger.info(f"✅ stock_basic 行情快照同步完成: {sync_count} 只股票")
 
         # Step 4: 标签生成
         logger.info("[4/8] 生成标签...")

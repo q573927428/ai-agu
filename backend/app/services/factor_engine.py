@@ -576,6 +576,8 @@ class FactorEngine:
         closes = [_safe_float(r.close) for r in daily_records if r.close]
         volumes = [_safe_float(r.volume) for r in daily_records if r.volume]
         amounts = [_safe_float(r.amount) for r in daily_records if r.amount]
+        # 注意：stock_daily 表中无换手率字段，此处用 pct_chg 作为波动代理
+        # 真实换手率需从 Tushare daily_basic 接口获取
         turnovers = [_safe_float(r.pct_chg) for r in daily_records if r.pct_chg is not None]
 
         if len(closes) < 5:

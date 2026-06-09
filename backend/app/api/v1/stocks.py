@@ -32,40 +32,26 @@ def list_stocks(
 
 @router.get("/search")
 def search_stocks(keyword: str = Query(..., min_length=1), db: Session = Depends(get_db)) -> ApiResponse:
-    """搜索股票"""
+    """搜索股票（含 daily_basic 基本面数据）"""
     service = StockService(db)
     results = service.search_stocks(keyword)
-    exchange_map = {"SSE": "SH", "SZSE": "SZ", "BSE": "BJ"}
     return ApiResponse(data={
-        "results": [
-            {
-                "stock_code": s.stock_code,
-                "stock_name": s.stock_name,
-                "industry": s.industry,
-                "exchange": exchange_map.get(s.exchange, s.exchange),
-                "close_price": float(s.close_price) if s.close_price is not None else None,
-                "pct_chg": float(s.pct_chg) if s.pct_chg is not None else None,
-                "pe_ttm": float(s.pe_ttm) if s.pe_ttm is not None else None,
-                "pb": float(s.pb) if s.pb is not None else None,
-                "turnover_rate": float(s.turnover_rate) if s.turnover_rate is not None else None,
-                "trade_date": str(s.trade_date) if s.trade_date else None,
-            }
-            for s in results
-        ],
+        "results": results,
     })
 
 
 @router.get("/{code}")
 def get_stock_detail(code: str, db: Session = Depends(get_db)) -> ApiResponse:
-    """获取股票详情（最新行情直接从 stock_basic 表获取）"""
+    """获取股票详情（基本面指标从 stock_daily_basic 表读取）"""
     service = StockService(db)
     detail = service.get_stock_detail(code)
     if not detail["basic"]:
         return ApiResponse(code=404, data=None, message="股票不存在")
 
     basic: StockBasic = detail["basic"]
+    db_obj = detail["latest_daily_basic"]
 
-    return ApiResponse(data={
+    result = {
         "basic": {
             "stock_code": basic.stock_code,
             "stock_name": basic.stock_name,
@@ -74,25 +60,47 @@ def get_stock_detail(code: str, db: Session = Depends(get_db)) -> ApiResponse:
             "market": basic.market,
             "list_date": str(basic.list_date) if basic.list_date else None,
         },
-        "latest_daily": {
-            "close": float(basic.close_price) if basic.close_price is not None else None,
-            "open": float(detail["latest_daily"].open) if detail["latest_daily"] else None,
-            "high": float(detail["latest_daily"].high) if detail["latest_daily"] else None,
-            "low": float(detail["latest_daily"].low) if detail["latest_daily"] else None,
-            "pre_close": float(detail["latest_daily"].pre_close) if detail["latest_daily"] else None,
-            "volume": int(detail["latest_daily"].volume) if detail["latest_daily"] else None,
-            "amount": float(detail["latest_daily"].amount) if detail["latest_daily"] else None,
+        "latest_daily": None,
+        "latest_daily_basic": None,
+        "latest_prediction": None,
+    }
+
+    if detail["latest_daily"]:
+        daily = detail["latest_daily"]
+        result["latest_daily"] = {
+            "close": float(daily.close) if daily.close else None,
+            "open": float(daily.open) if daily.open else None,
+            "high": float(daily.high) if daily.high else None,
+            "low": float(daily.low) if daily.low else None,
+            "pre_close": float(daily.pre_close) if daily.pre_close else None,
+            "volume": int(daily.volume) if daily.volume else None,
+            "amount": float(daily.amount) if daily.amount else None,
             "pct_chg": float(basic.pct_chg) if basic.pct_chg is not None else None,
-            "pe_ttm": float(basic.pe_ttm) if basic.pe_ttm is not None else None,
-            "pb": float(basic.pb) if basic.pb is not None else None,
-            "turnover_rate": float(basic.turnover_rate) if basic.turnover_rate is not None else None,
-        } if detail["latest_daily"] else None,
-        "latest_prediction": {
-            "predict_date": str(detail["latest_prediction"].predict_date) if detail["latest_prediction"] else None,
-            "predicted_return": float(detail["latest_prediction"].predicted_return) if detail["latest_prediction"] else None,
-            "confidence": float(detail["latest_prediction"].confidence) if detail["latest_prediction"] else None,
-        } if detail["latest_prediction"] else None,
-    })
+        }
+
+    if db_obj:
+        result["latest_daily_basic"] = {
+            "trade_date": str(db_obj.trade_date) if db_obj.trade_date else None,
+            "close": float(db_obj.close) if db_obj.close else None,
+            "pe_ttm": float(db_obj.pe_ttm) if db_obj.pe_ttm else None,
+            "pb": float(db_obj.pb) if db_obj.pb else None,
+            "turnover_rate": float(db_obj.turnover_rate) if db_obj.turnover_rate is not None else None,
+            "volume_ratio": float(db_obj.volume_ratio) if db_obj.volume_ratio is not None else None,
+            "ps_ttm": float(db_obj.ps_ttm) if db_obj.ps_ttm else None,
+            "dv_ttm": float(db_obj.dv_ttm) if db_obj.dv_ttm is not None else None,
+            "total_mv": float(db_obj.total_mv) if db_obj.total_mv is not None else None,
+            "circ_mv": float(db_obj.circ_mv) if db_obj.circ_mv is not None else None,
+        }
+
+    if detail["latest_prediction"]:
+        pred = detail["latest_prediction"]
+        result["latest_prediction"] = {
+            "predict_date": str(pred.predict_date) if pred.predict_date else None,
+            "predicted_return": float(pred.predicted_return) if pred.predicted_return else None,
+            "confidence": float(pred.confidence) if pred.confidence else None,
+        }
+
+    return ApiResponse(data=result)
 
 
 @router.get("/{code}/kline")

@@ -36,9 +36,6 @@ class StockBasic(Base):
     trade_date = Column(Date, comment="最新行情日期")
     close_price = Column(DECIMAL(12, 3), comment="最新收盘价")
     pct_chg = Column(DECIMAL(12, 6), comment="最新涨跌幅(%)")
-    pe_ttm = Column(DECIMAL(12, 6), comment="最新滚动市盈率(PE-TTM)")
-    pb = Column(DECIMAL(12, 6), comment="最新市净率(PB)")
-    turnover_rate = Column(DECIMAL(12, 6), comment="最新换手率(%)")
 
     # ── 系统字段 ──
     is_active = Column(Integer, default=1, comment="是否活跃")

@@ -31,7 +31,7 @@
             <span v-else>--</span>
           </template>
         </el-table-column>
-        <el-table-column prop="pct_chg" label="涨跌幅" width="120" sortable="custom">
+        <el-table-column prop="pct_chg" label="涨跌幅" width="110" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.pct_chg != null" :style="{ color: row.pct_chg > 0 ? '#4caf50' : row.pct_chg < 0 ? '#f44336' : '' }">
               {{ row.pct_chg > 0 ? '+' : '' }}{{ row.pct_chg.toFixed(2) }}%
@@ -39,21 +39,45 @@
             <span v-else>--</span>
           </template>
         </el-table-column>
-        <el-table-column prop="pe_ttm" label="市盈率" width="120" sortable="custom">
+        <el-table-column prop="pe_ttm" label="市盈率" width="110" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.pe_ttm != null">{{ row.pe_ttm.toFixed(2) }}</span>
             <span v-else>--</span>
           </template>
         </el-table-column>
-        <el-table-column prop="pb" label="市净率" width="120" sortable="custom">
+        <el-table-column prop="pb" label="市净率" width="110" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.pb != null">{{ row.pb.toFixed(2) }}</span>
             <span v-else>--</span>
           </template>
         </el-table-column>
-        <el-table-column prop="turnover_rate" label="换手率" width="120" sortable="custom">
+        <el-table-column prop="ps_ttm" label="市销率" width="110" sortable="custom">
+          <template #default="{ row }">
+            <span v-if="row.ps_ttm != null">{{ row.ps_ttm.toFixed(2) }}</span>
+            <span v-else>--</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="dv_ratio" label="股息率" width="110" sortable="custom">
+          <template #default="{ row }">
+            <span v-if="row.dv_ratio != null">{{ row.dv_ratio.toFixed(2) }}%</span>
+            <span v-else>--</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="turnover_rate" label="换手率" width="110" sortable="custom">
           <template #default="{ row }">
             <span v-if="row.turnover_rate != null">{{ row.turnover_rate.toFixed(2) }}%</span>
+            <span v-else>--</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="volume_ratio" label="量比" width="110" sortable="custom">
+          <template #default="{ row }">
+            <span v-if="row.volume_ratio != null">{{ row.volume_ratio.toFixed(2) }}</span>
+            <span v-else>--</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="total_mv" label="总市值" width="120" sortable="custom">
+          <template #default="{ row }">
+            <span v-if="row.total_mv != null">{{ row.total_mv.toLocaleString() }}</span>
             <span v-else>--</span>
           </template>
         </el-table-column>
@@ -185,6 +209,10 @@ function onSortChange(data: { prop: string | null; order: string | null }) {
     pe_ttm: "pe_ttm",
     pb: "pb",
     turnover_rate: "turnover_rate",
+    volume_ratio: "volume_ratio",
+    ps_ttm: "ps_ttm",
+    dv_ratio: "dv_ratio",
+    total_mv: "total_mv",
     trade_date: "trade_date",
   };
 

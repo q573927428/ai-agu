@@ -109,6 +109,7 @@ def parse_args():
     parser.add_argument("--full-financial", action="store_true", help="全量刷新财务数据（默认增量）")
     parser.add_argument("--skip-stock-basic", action="store_true", help="跳过股票基础信息拉取")
     parser.add_argument("--skip-index", action="store_true", help="跳过指数行情拉取")
+    parser.add_argument("--skip-daily-basic", action="store_true", help="跳过每日基本面指标拉取")
     parser.add_argument("--delay", type=float, default=0.35,
                         help="每次请求间隔秒数 (默认0.35，Tushare免费版500次/分钟)")
     return parser.parse_args()
@@ -372,6 +373,115 @@ def _call_daily_by_date_with_retry(trade_date: str, max_retries: int = 3) -> pd.
             else:
                 raise
     raise RuntimeError(f"调用 pro.daily(trade_date={trade_date}) 失败，已重试 {max_retries} 次")
+
+
+def _call_daily_basic_by_date_with_retry(trade_date: str, max_retries: int = 3) -> pd.DataFrame:
+    """
+    调用 pro.daily_basic(trade_date=...) — 1次请求获取全市场每日基本面指标。
+    单次最多返回6000条，可按日期循环提取全部历史。
+    """
+    for attempt in range(1, max_retries + 1):
+        _rate_limit(0.35)
+        try:
+            df = pro.daily_basic(trade_date=trade_date)
+            return df
+        except Exception as e:
+            err_msg = str(e)
+            if "频率超限" in err_msg or "超限" in err_msg or "rate limit" in err_msg.lower():
+                if attempt < max_retries:
+                    wait_time = 61
+                    logger.warning(f"    ↪ [频率超限] daily_basic {trade_date} 等待 {wait_time}s 重试 (第{attempt}次)")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.warning(f"    ❌ [频率超限] daily_basic {trade_date} 已达最大重试次数，放弃")
+                    raise
+            else:
+                raise
+    raise RuntimeError(f"调用 pro.daily_basic(trade_date={trade_date}) 失败，已重试 {max_retries} 次")
+
+
+def fetch_daily_basic_batch(session: Session, trade_dates: list, delay: float = 0.35, top_n: int = 0) -> int:
+    """
+    按日期批量拉取全市场每日基本面指标 → stock_daily_basic 表。
+
+    每个交易日调用 1 次 pro.daily_basic(trade_date=...)，最多返回6000条，
+    换手率/量比/PE/PB/总市值等重要指标全覆盖。
+    """
+    from app.models.stock_daily_basic import StockDailyBasic
+
+    if not trade_dates:
+        return 0
+
+    total_inserted = 0
+    for i, trade_date in enumerate(trade_dates):
+        trade_date_str = trade_date.replace("-", "")
+        logger.info(f"  📅 [{i+1}/{len(trade_dates)}] 拉取 {trade_date} 每日基本面指标...")
+
+        df = _call_daily_basic_by_date_with_retry(trade_date_str)
+
+        if df is None or df.empty:
+            logger.warning(f"    ⚠️ {trade_date} 无 daily_basic 数据")
+            continue
+
+        if top_n > 0:
+            df = df.head(top_n)
+
+        records = 0
+        for _, row in df.iterrows():
+            ts_code = str(row.get("ts_code", "")).strip()
+            if not ts_code:
+                continue
+            stock_code = ts_code.split(".")[0]
+
+            stmt = text("""
+                INSERT INTO stock_daily_basic
+                    (stock_code, trade_date, close, turnover_rate, turnover_rate_f, volume_ratio,
+                     pe, pe_ttm, pb, ps, ps_ttm, dv_ratio, dv_ttm,
+                     total_share, float_share, free_share, total_mv, circ_mv)
+                VALUES
+                    (:stock_code, :trade_date, :close, :turnover_rate, :turnover_rate_f, :volume_ratio,
+                     :pe, :pe_ttm, :pb, :ps, :ps_ttm, :dv_ratio, :dv_ttm,
+                     :total_share, :float_share, :free_share, :total_mv, :circ_mv)
+                ON DUPLICATE KEY UPDATE
+                    close = VALUES(close), turnover_rate = VALUES(turnover_rate),
+                    turnover_rate_f = VALUES(turnover_rate_f), volume_ratio = VALUES(volume_ratio),
+                    pe = VALUES(pe), pe_ttm = VALUES(pe_ttm), pb = VALUES(pb),
+                    ps = VALUES(ps), ps_ttm = VALUES(ps_ttm),
+                    dv_ratio = VALUES(dv_ratio), dv_ttm = VALUES(dv_ttm),
+                    total_share = VALUES(total_share), float_share = VALUES(float_share),
+                    free_share = VALUES(free_share), total_mv = VALUES(total_mv),
+                    circ_mv = VALUES(circ_mv)
+            """)
+            trade_date_obj = datetime.strptime(trade_date_str, "%Y%m%d").date()
+            session.execute(stmt, {
+                "stock_code": stock_code,
+                "trade_date": trade_date_obj,
+                "close": _safe_decimal(row.get("close"), 3),
+                "turnover_rate": _safe_decimal(row.get("turnover_rate"), 6),
+                "turnover_rate_f": _safe_decimal(row.get("turnover_rate_f"), 6),
+                "volume_ratio": _safe_decimal(row.get("volume_ratio"), 6),
+                "pe": _safe_decimal(row.get("pe"), 6),
+                "pe_ttm": _safe_decimal(row.get("pe_ttm"), 6),
+                "pb": _safe_decimal(row.get("pb"), 6),
+                "ps": _safe_decimal(row.get("ps"), 6),
+                "ps_ttm": _safe_decimal(row.get("ps_ttm"), 6),
+                "dv_ratio": _safe_decimal(row.get("dv_ratio"), 6),
+                "dv_ttm": _safe_decimal(row.get("dv_ttm"), 6),
+                "total_share": _safe_decimal(row.get("total_share"), 2),
+                "float_share": _safe_decimal(row.get("float_share"), 2),
+                "free_share": _safe_decimal(row.get("free_share"), 2),
+                "total_mv": _safe_decimal(row.get("total_mv"), 2),
+                "circ_mv": _safe_decimal(row.get("circ_mv"), 2),
+            })
+            records += 1
+
+        session.commit()
+        total_inserted += records
+        logger.info(f"    ✅ {trade_date} -> {records} 条基本面数据")
+
+    logger.info(f"  ✅ daily_basic 批量拉取完成，共 {total_inserted} 条")
+    return total_inserted
 
 
 def fetch_dates_batch(session: Session, trade_dates: list, delay: float = 0.35, top_n: int = 0) -> int:
@@ -990,10 +1100,9 @@ def main():
         else:
             fetch_stock_basic(db)
 
-        # ========== ② 按日期批量拉取日K线（不再按股票拉取）==========
+        # ========== ② 按日期批量拉取日K线 ==========
         logger.info(f"\n{'='*50}")
         logger.info("📊 按日期批量拉取日K线 (pro.daily(trade_date=...))")
-        logger.info("    每天1次请求拉全市场 → 替代旧版按股票拉取(5000+次)")
         logger.info(f"{'='*50}")
 
         total_records = fetch_dates_batch(
@@ -1003,12 +1112,27 @@ def main():
             top_n=args.top,
         )
 
-        # ========== ③ 指数行情 ==========
+        # ========== ③ 每日基本面指标 (daily_basic) ==========
+        if not args.skip_daily_basic:
+            logger.info(f"\n{'='*50}")
+            logger.info("📊 拉取每日基本面指标 (pro.daily_basic)")
+            logger.info("  换手率/量比/PE/PB/总市值等 — 存入 stock_daily_basic 表")
+            logger.info(f"{'='*50}")
+            from app.models.stock_daily_basic import StockDailyBasic
+            daily_basic_count = db.query(StockDailyBasic).count()
+            if daily_basic_count > 0 and args.history == 0 and len(args.dates) <= 1:
+                # 有历史数据且仅拉取单日 → 只拉取最新日期
+                daily_basic_records = fetch_daily_basic_batch(db, dates[-1:], delay=args.delay, top_n=args.top)
+            else:
+                daily_basic_records = fetch_daily_basic_batch(db, dates, delay=args.delay, top_n=args.top)
+        else:
+            daily_basic_records = 0
+
+        # ========== ④ 指数行情 ==========
         if not args.skip_index:
             logger.info(f"\n{'='*50}")
             logger.info("📊 拉取指数行情 (pro.index_daily)")
             logger.info(f"{'='*50}")
-            # 需要跟踪的核心指数
             index_ts_codes = [
                 "000001.SH",  # 上证指数
                 "399001.SZ",  # 深证成指
@@ -1053,7 +1177,6 @@ def main():
                             )
                             db.add(rec)
                             total_index_count += 1
-                        # else: 指数当天无交易数据（非交易日），跳过
                     except Exception as e:
                         err_msg = str(e)
                         if "频率超限" in err_msg or "超限" in err_msg or "rate limit" in err_msg.lower():
@@ -1065,14 +1188,14 @@ def main():
                 logger.info(f"    ✅ {dt} -> {len(index_ts_codes)} 个指数")
             logger.info(f"  ✅ 指数行情拉取完成，库内总计: {db.query(IndexDaily).count()}")
 
-        # ========== ④ 宏观数据 ==========
+        # ========== ⑤ 宏观数据 ==========
         if not args.skip_macro:
             logger.info(f"\n{'='*50}")
             logger.info("📊 拉取宏观经济数据")
             logger.info(f"{'='*50}")
             fetch_macro_data(db, delay=args.delay)
 
-        # ========== ④ 财务数据 ==========
+        # ========== ⑥ 财务数据 ==========
         if not args.skip_financial:
             logger.info(f"\n{'='*50}")
             logger.info("📊 拉取上市公司财务数据")
@@ -1087,8 +1210,11 @@ def main():
         logger.info(f"{'='*50}")
         logger.info(f"  处理交易日: {len(dates)} 天 ({dates[0]} ~ {dates[-1]})")
         logger.info(f"  写入行情数据: {total_records} 条")
+        logger.info(f"  写入基本面指标: {daily_basic_records} 条")
         logger.info(f"  数据库股票总数: {db.query(StockBasic).count()}")
         logger.info(f"  日行情总记录数: {db.query(StockDaily).count()}")
+        from app.models.stock_daily_basic import StockDailyBasic
+        logger.info(f"  基本面指标总记录数: {db.query(StockDailyBasic).count()}")
         logger.info(f"  宏观数据条数: {db.query(MacroData).count()}")
         logger.info(f"  指数行情条数: {db.query(IndexDaily).count()}")
         logger.info(f"  利润表记录数: {db.query(Income).count()}")

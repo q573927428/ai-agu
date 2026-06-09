@@ -35,45 +35,45 @@
               </div>
             </div>
             <el-divider style="margin: 10px 0" />
-            <div class="info-grid" v-if="stockDaily">
+            <div class="info-grid" v-if="stockDaily || stockDailyBasic">
               <div class="info-row">
                 <span class="info-label">开</span>
-                <span class="info-value">{{ stockDaily.open ?? "--" }}</span>
+                <span class="info-value">{{ stockDaily?.open ?? "--" }}</span>
               </div>
               <div class="info-row">
                 <span class="info-label">高</span>
-                <span class="info-value">{{ stockDaily.high ?? "--" }}</span>
+                <span class="info-value">{{ stockDaily?.high ?? "--" }}</span>
               </div>
               <div class="info-row">
                 <span class="info-label">低</span>
-                <span class="info-value">{{ stockDaily.low ?? "--" }}</span>
+                <span class="info-value">{{ stockDaily?.low ?? "--" }}</span>
               </div>
               <div class="info-row">
                 <span class="info-label">收</span>
                 <span class="info-value">
-                  {{ stockDaily.close ?? "--" }}
+                  {{ stockDaily?.close ?? "--" }}
                 </span>
               </div>
               <div class="info-row">
                 <span class="info-label">涨跌幅</span>
                 <span class="info-value">
-                  <span :style="{ color: getChangeColor(stockDaily.pct_chg), marginLeft: '6px' }">
-                    {{ formatChange(stockDaily.pct_chg) }}
+                  <span :style="{ color: getChangeColor(stockDaily?.pct_chg), marginLeft: '6px' }">
+                    {{ formatChange(stockDaily?.pct_chg) }}
                   </span>
                 </span>
               </div>
 
               <div class="info-row">
                 <span class="info-label">市盈率</span>
-                <span class="info-value">{{ stockDaily.pe_ttm ?? "--" }}</span>
+                <span class="info-value">{{ stockDailyBasic?.pe_ttm ?? "--" }}</span>
               </div>
               <div class="info-row">
                 <span class="info-label">市净率</span>
-                <span class="info-value">{{ stockDaily.pb ?? "--" }}</span>
+                <span class="info-value">{{ stockDailyBasic?.pb ?? "--" }}</span>
               </div>
               <div class="info-row">
                 <span class="info-label">换手率</span>
-                <span class="info-value">{{ stockDaily.turnover_rate ?? "--" }}%</span>
+                <span class="info-value">{{ stockDailyBasic?.turnover_rate ?? "--" }}%</span>
               </div>
             </div>
           </el-card>
@@ -128,7 +128,7 @@ import { ref, computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useApi } from "~/composables/useApi";
 import { formatPercent, formatConfidence, formatChange, getChangeColor } from "~/utils/format";
-import type { StockBasic, StockDaily, StockPrediction } from "~/types/api";
+import type { StockBasic, StockDaily, StockDailyBasic, StockPrediction } from "~/types/api";
 
 const route = useRoute();
 const router = useRouter();
@@ -137,6 +137,7 @@ const { fetchStockDetail, fetchStockKline } = useApi();
 const loading = ref(true);
 const stockBasic = ref<StockBasic | null>(null);
 const stockDaily = ref<StockDaily | null>(null);
+const stockDailyBasic = ref<StockDailyBasic | null>(null);
 const stockPrediction = ref<StockPrediction | null>(null);
 
 // K线图数据
@@ -169,6 +170,7 @@ onMounted(async () => {
   if (result.data) {
     stockBasic.value = result.data.basic;
     stockDaily.value = result.data.latest_daily;
+    stockDailyBasic.value = result.data.latest_daily_basic;
     stockPrediction.value = result.data.latest_prediction;
   }
   loading.value = false;
