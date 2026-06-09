@@ -1,6 +1,7 @@
 # === 编辑器 / IDE ===
 .vscode/
 .idea/
+.clinerules
 *.swp
 *.swo
 *~
