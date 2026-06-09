@@ -17,7 +17,7 @@ from app.utils.date_utils import get_next_trade_day
 
 PREDICTION_MIN_STD_PCT = 1.0
 PREDICTION_TARGET_STD_PCT = 3.5
-PREDICTION_LIMIT_BUFFER = 0.98
+PREDICTION_LIMIT_BUFFER = 1.0
 
 
 class Predictor:
