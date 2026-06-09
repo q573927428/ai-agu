@@ -1,13 +1,15 @@
 """排名相关API路由"""
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from datetime import date, timedelta
 from app.api.deps import get_db
 from app.services.ranking_service import RankingService
 from app.schemas.ranking import RankingResponse, RankingItem, FactorContribution
 from app.models.prediction import Prediction
 from app.models.stock_daily import StockDaily
+from app.utils.date_utils import get_latest_trade_day
+from loguru import logger
 
 router = APIRouter(prefix="/rankings", tags=["排名"])
 
@@ -45,11 +47,29 @@ def get_rankings(snapshot_date: Optional[str] = Query(None), db: Session = Depen
     target_date = pred_date + timedelta(days=1)  # 次日（T+1）
 
     # 查询预测日、次日的收盘价/涨跌幅，以及前日收盘价
+    query_dates = [pred_date, target_date]
+
+    # 如果预测日期没有行情数据（比如盘中运行），自动回退到上一个交易日
+    daily_check = db.query(StockDaily.trade_date).filter(
+        StockDaily.trade_date == pred_date
+    ).first()
+    if not daily_check:
+        # 查找最近的有数据的交易日
+        latest_trade = db.query(StockDaily.trade_date).distinct().order_by(
+            StockDaily.trade_date.desc()
+        ).first()
+        if latest_trade:
+            fallback_date = latest_trade[0]
+            logger.warning(f"排名: {pred_date} 无行情数据，降级到最近交易日 {fallback_date}")
+            pred_date = fallback_date
+            target_date = pred_date + timedelta(days=1)
+            query_dates = [pred_date, target_date]
+
     daily_rows = (
         db.query(StockDaily.stock_code, StockDaily.trade_date, StockDaily.close, StockDaily.pre_close, StockDaily.pct_chg)
         .filter(
             StockDaily.stock_code.in_(stock_codes),
-            StockDaily.trade_date.in_([pred_date, target_date]),
+            StockDaily.trade_date.in_(query_dates),
         )
         .all()
     )
