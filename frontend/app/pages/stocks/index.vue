@@ -2,7 +2,23 @@
   <div class="stocks-page">
     <div class="page-header">
       <h2 class="page-title">全部股票</h2>
-      <div class="page-total">共 {{ total }} 只股票</div>
+      <div class="page-header-right">
+        <el-input
+          v-model="searchKeyword"
+          placeholder="搜索股票代码或名称"
+          clearable
+          size="default"
+          style="width: 260px"
+          @input="onSearchInput"
+          @clear="onSearchClear"
+          @keyup.enter="doSearch"
+        >
+          <template #prefix>
+            <el-icon><ElIconSearch /></el-icon>
+          </template>
+        </el-input>
+        <div class="page-total">共 {{ total }} 只股票</div>
+      </div>
     </div>
 
     <el-card shadow="hover">
@@ -79,9 +95,10 @@
 import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useApi } from "~/composables/useApi";
+import { Search as ElIconSearch } from "@element-plus/icons-vue";
 
 const router = useRouter();
-const { fetchStockList } = useApi();
+const { fetchStockList, searchStocks } = useApi();
 
 const loading = ref(false);
 const stockList = ref<any[]>([]);
@@ -90,12 +107,55 @@ const currentPage = ref(1);
 const pageSize = ref(15);
 const sortBy = ref<string | undefined>("pct_chg");
 const sortOrder = ref<string | undefined>("desc");
+const searchKeyword = ref("");
+let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
 onMounted(() => {
   loadData();
 });
 
+function onSearchInput() {
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    doSearch();
+  }, 300);
+}
+
+function onSearchClear() {
+  searchKeyword.value = "";
+  currentPage.value = 1;
+  loadData();
+}
+
+async function doSearch() {
+  const keyword = searchKeyword.value.trim();
+  if (!keyword) {
+    onSearchClear();
+    return;
+  }
+  if (searchTimer) {
+    clearTimeout(searchTimer);
+    searchTimer = null;
+  }
+  loading.value = true;
+  try {
+    const res = await searchStocks(keyword);
+    if (res.data && res.data.results) {
+      stockList.value = res.data.results;
+      total.value = res.data.results.length;
+    }
+  } catch (e) {
+    console.error("搜索股票失败", e);
+  } finally {
+    loading.value = false;
+  }
+}
+
 async function loadData() {
+  if (searchKeyword.value.trim()) {
+    doSearch();
+    return;
+  }
   loading.value = true;
   try {
     const res = await fetchStockList(currentPage.value, pageSize.value, sortBy.value, sortOrder.value);
@@ -157,6 +217,12 @@ function goToStock(row: any) {
   margin-bottom: 20px;
 }
 
+.page-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .page-title {
   font-size: 22px;
   margin: 0;
@@ -166,6 +232,7 @@ function goToStock(row: any) {
 .page-total {
   font-size: 14px;
   color: var(--el-text-color-secondary);
+  white-space: nowrap;
 }
 
 .pagination-wrap {

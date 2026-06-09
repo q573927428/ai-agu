@@ -35,12 +35,20 @@ def search_stocks(keyword: str = Query(..., min_length=1), db: Session = Depends
     """搜索股票"""
     service = StockService(db)
     results = service.search_stocks(keyword)
+    exchange_map = {"SSE": "SH", "SZSE": "SZ", "BSE": "BJ"}
     return ApiResponse(data={
         "results": [
             {
                 "stock_code": s.stock_code,
                 "stock_name": s.stock_name,
                 "industry": s.industry,
+                "exchange": exchange_map.get(s.exchange, s.exchange),
+                "close_price": float(s.close_price) if s.close_price is not None else None,
+                "pct_chg": float(s.pct_chg) if s.pct_chg is not None else None,
+                "pe_ttm": float(s.pe_ttm) if s.pe_ttm is not None else None,
+                "pb": float(s.pb) if s.pb is not None else None,
+                "turnover_rate": float(s.turnover_rate) if s.turnover_rate is not None else None,
+                "trade_date": str(s.trade_date) if s.trade_date else None,
             }
             for s in results
         ],
